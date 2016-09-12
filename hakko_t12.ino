@@ -912,8 +912,10 @@ void IRON::applyPower(void) {
   h_power.put(actual_power);
   fastPWMdac.analogWrite8bit(actual_power);
   if (actual_power > 0) {                       // If power is supplied, check the current through the iron
+    delay(20);
     int curr = analogRead(cPIN);
     no_iron = (curr < min_curr);
+    if (no_iron) switchPower(false);            // Switch of the iron immediately
     check_ironMS = millis() + check_iron_ms;
   }
 }
@@ -1566,7 +1568,7 @@ void loop() {
   bool iron_on = iron.isOn();
   if ((pCurrentScreen == &wrkScr) && !iron_on) {  // the soldering iron failed
     pCurrentScreen = &errScr;
-  pCurrentScreen->init();
+    pCurrentScreen->init();
   }
 
   SCREEN* nxt = pCurrentScreen->returnToMain();
