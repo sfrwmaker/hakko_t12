@@ -25,6 +25,7 @@ const uint16_t temp_minC = 180;                 // Minimum temperature in degree
 const uint16_t temp_maxC = 450;                 // Maximum temperature in degrees of celsius
 const uint16_t temp_minF = (temp_minC *9 + 32*5 + 2)/5;
 const uint16_t temp_maxF = (temp_maxC *9 + 32*5 + 2)/5;
+const float    iron_working_dispersion = 15.5;  // The power dispersion limit of the iron used
 
 //------------------------------------------ class FastPWDdac --------------------------------------------------
 /*
@@ -67,45 +68,45 @@ struct cfg {
   uint16_t temp_min;                            // The minimum temperature (180 centegrees)
   uint16_t temp_max;                            // The temperature for 450 centegrees
   uint16_t temp;                                // The temperature of the iron to be start
+  byte     off_timeout;                         // The Automatic switch-off timeout in minutes [0 - 30]
   bool     celsius;                             // Temperature units: true - celsius, false - farenheit
 };
 
 class CONFIG {
   public:
     CONFIG() {
-      can_write = is_valid = false;
-      buffRecords = 0;
+      can_write     = is_valid = false;
+      buffRecords   = 0;
       rAddr = wAddr = 0;
-      eLength = 0;
-      nextRecID = 0;
-      save_calibration = false;
+      eLength       = 0;
+      nextRecID     = 0;
     }
-    void init();
-    bool load(void);
-    bool isValid(void)    { return is_valid; }
-    uint16_t temp(void)   { return Config.temp; }
-    bool getTempUnits(void)  { return Config.celsius; }
-    bool saveTemp(uint16_t t);
-    void saveConfig(bool cels);
-    void saveCalibrationData(uint16_t t_max, uint16_t t_min);
-    void getCalibrationData(uint16_t& t_max, uint16_t& t_min);
-    void setDefaults(bool Write = false);
+    void     init(void);
+    bool     load(void);
+    bool     isValid(void)                      { return is_valid; }
+    uint16_t temp(void)                         { return Config.temp; }
+    byte     getOffTimeout(void)                { return Config.off_timeout; }
+    bool     getTempUnits(void)                 { return Config.celsius; }
+    bool     saveTemp(uint16_t t);
+    void     saveConfig(byte off, bool cels);
+    void     saveCalibrationData(uint16_t t_max, uint16_t t_min);
+    void     getCalibrationData(uint16_t& t_max, uint16_t& t_min);
+    void     setDefaults(bool Write = false);
   private:
     struct cfg Config;
     bool readRecord(uint16_t addr, uint32_t &recID);
     bool save(void);
     bool can_write;                             // Tha flag indicates that data can be saved
-    bool is_valid;                              // Weither tha data was loaded
-    bool save_calibration;                      // Weither the calibration data should be saved
+    bool is_valid;                              // Whether tha data was loaded
     byte buffRecords;                           // Number of the records in the outpt buffer
     uint16_t rAddr;                             // Address of thecorrect record in EEPROM to be read
     uint16_t wAddr;                             // Address in the EEPROM to start write new record
     uint16_t eLength;                           // Length of the EEPROM, depends on arduino model
     uint32_t nextRecID;                         // next record ID
     const byte record_size = 16;                // The size of one record in bytes
-    const uint16_t def_min = 285;               // Default minimum temperature
-    const uint16_t def_max = 840;               // Default maximun temperature
-    const uint16_t def_set = 600;               // Default setup temperature
+    const uint16_t def_min = 330;               // Default minimum temperature
+    const uint16_t def_max = 910;               // Default maximun temperature
+    const uint16_t def_set = 426;               // Default setup temperature
 };
 
  // Read the records until the last one, point wAddr (write address) after the last record
@@ -113,11 +114,11 @@ void CONFIG::init(void) {
   eLength = EEPROM.length();
   byte t, p ,h;
   uint32_t recID;
-  uint32_t minRecID = 0xffffffff;
+  uint32_t minRecID   = 0xffffffff;
   uint16_t minRecAddr = 0;
-  uint32_t maxRecID = 0;
+  uint32_t maxRecID   = 0;
   uint16_t maxRecAddr = 0;
-  byte records = 0;
+  byte records        = 0;
 
   setDefaults();
   nextRecID = 0;
@@ -156,21 +157,22 @@ void CONFIG::init(void) {
 }
 
 bool CONFIG::saveTemp(uint16_t t) {
-  if (!save_calibration && (t == Config.temp)) return true;
+  if (t == Config.temp) return true;
   Config.temp = t;
-  save_calibration = false;
   return save();  
 }
 
-void CONFIG::saveConfig(bool cels) {
-  Config.celsius = cels;
+void CONFIG::saveConfig(byte off, bool cels) {
+  if (off > 30) off = 0;
+  Config.off_timeout = off;
+  Config.celsius     = cels;
   save();                                       // Save new data into the EEPROM
 }
 
 void CONFIG::saveCalibrationData(uint16_t t_max, uint16_t t_min) {
   Config.temp_max  = t_max;
   Config.temp_min  = t_min;
-  save_calibration = true;
+  save();
 }
 
 void CONFIG::getCalibrationData(uint16_t& t_max, uint16_t& t_min) {
@@ -244,24 +246,30 @@ bool CONFIG::readRecord(uint16_t addr, uint32_t &recID) {
 }
 
 void CONFIG::setDefaults(bool Write) {          // Restore default values
-  Config.temp     = def_set;
-  Config.temp_min = def_min;
-  Config.temp_max = def_max;
-  Config.celsius = true;                        // Default use celsius
-  if (Write) {
-    save();
-    save_calibration = false;
-  }
+  Config.temp        = def_set;
+  Config.temp_min    = def_min;
+  Config.temp_max    = def_max;
+  Config.off_timeout = 0;                       // Default autometic switch-off timeout (disabled)
+  Config.celsius     = true;                    // Default use celsius
+  if (Write) save();
 }
 
 //------------------------------------------ class BUZZER ------------------------------------------------------
 class BUZZER {
   public:
-    BUZZER(byte BuzzerPIN) { buzzerPIN = BuzzerPIN; }
-    void shortBeep(void)  { tone(buzzerPIN, 3520, 160); }
+    BUZZER(byte buzzerP)  { buzzer_pin = buzzerP; }
+    void  init(void);
+    void  shortBeep(void)  { tone(buzzerPIN, 3520, 160); }
+    void  lowBeep(void)    { tone(buzzerPIN,  880, 160); }
+    void  doubleBeep(void) { tone(buzzerPIN, 3520, 160); delay(300); tone(buzzerPIN, 3520, 160); }
   private:
-    byte buzzerPIN;
+    byte buzzer_pin;
 };
+
+void BUZZER::init(void) {
+  pinMode(buzzer_pin, OUTPUT);
+  noTone(buzzer_pin);
+}
 
 //------------------------------------------ class BUTTON ------------------------------------------------------
 class BUTTON {
@@ -271,9 +279,9 @@ class BUTTON {
       buttonPIN = ButtonPIN;
       overPress = timeout_ms;
     }
-    void init(void) { pinMode(buttonPIN, INPUT_PULLUP); }
+    void init(void)                             { pinMode(buttonPIN, INPUT_PULLUP); }
     void setTimeout(uint16_t timeout_ms = 3000) { overPress = timeout_ms; }
-    byte intButtonStatus(void) { byte m = mode; mode = 0; return m; }
+    byte intButtonStatus(void)                  { byte m = mode; mode = 0; return m; }
     void cnangeINTR(void);
     byte buttonCheck(void);
     bool buttonTick(void);
@@ -349,37 +357,41 @@ class ENCODER {
       pinMode(mPIN, INPUT_PULLUP);
       pinMode(sPIN, INPUT_PULLUP);
     }
-    void reset(int16_t initPos, int16_t low, int16_t upp, byte inc = 1, byte fast_inc = 0, bool looped = false) {
-      min_pos = low; max_pos = upp;
-      if (!write(initPos)) initPos = min_pos;
-      increment = fast_increment = inc;
-      if (fast_inc > increment) fast_increment = fast_inc;
-      is_looped = looped;
-    }
-    void set_increment(byte inc) { increment = inc; }
-    byte get_increment(void) { return increment; }
-    bool write(int16_t initPos) {
-      if ((initPos >= min_pos) && (initPos <= max_pos)) {
-        pos = initPos;
-        return true;
-      }
-      return false;
-    }
-    int16_t read(void) { return pos; }
-    void cnangeINTR(void);
+    void    set_increment(byte inc)             { increment = inc; }
+    byte    get_increment(void)                 { return increment; }
+    int16_t read(void)                          { return pos; }
+    void    reset(int16_t initPos, int16_t low, int16_t upp, byte inc = 1, byte fast_inc = 0, bool looped = false);
+    bool    write(int16_t initPos);
+    void    cnangeINTR(void);
   private:
-    const uint16_t overPress = 1000;
-    int32_t min_pos, max_pos;
+    int32_t           min_pos, max_pos;
     volatile uint32_t pt;                       // Time in ms when the encoder was rotaded
     volatile uint32_t changed;                  // Time in ms when the value was changed
-    volatile bool channelB;
-    volatile int16_t pos;                       // Encoder current position
-    byte mPIN, sPIN;                            // The pin numbers connected to the main channel and to the socondary channel
-    bool is_looped;                             // Weither the encoder is looped
-    byte increment;                             // The value to add or substract for each encoder tick
-    byte fast_increment;                        // The value to change encoder when in runs quickly
-    const uint16_t fast_timeout = 300;          // Time in ms to change encodeq quickly
+    volatile bool     channelB;
+    volatile int16_t  pos;                      // Encoder current position
+    byte              mPIN, sPIN;               // The pin numbers connected to the main channel and to the socondary channel
+    bool              is_looped;                // Whether the encoder is looped
+    byte              increment;                // The value to add or substract for each encoder tick
+    byte              fast_increment;           // The value to change encoder when in runs quickly
+    const uint16_t    fast_timeout = 300;       // Time in ms to change encodeq quickly
+    const uint16_t    overPress = 1000;
 };
+
+bool ENCODER::write(int16_t initPos) {
+  if ((initPos >= min_pos) && (initPos <= max_pos)) {
+    pos = initPos;
+    return true;
+  }
+  return false;
+}
+
+void ENCODER::reset(int16_t initPos, int16_t low, int16_t upp, byte inc, byte fast_inc, bool looped) {
+  min_pos = low; max_pos = upp;
+  if (!write(initPos)) initPos = min_pos;
+  increment = fast_increment = inc;
+  if (fast_inc > increment) fast_increment = fast_inc;
+  is_looped = looped;
+}
 
 void ENCODER::cnangeINTR(void) {                // Interrupt function, called when the channel A of encoder changed
   
@@ -425,30 +437,33 @@ class DSPL : protected LiquidCrystal {
     void tCurr(uint16_t t);                     // Show The current temperature
     void pSet(byte p);                          // Show the power set
     void tempLim(byte indx, uint16_t temp);     // Show the upper or lower temperature limit
+    void timeToOff(byte sec);                   // Show the time to automatic off the iron
     void msgNoIron(void);                       // Show 'No iron' message
     void msgReady(void);                        // Show 'Ready' message
+    void msgWorking(void);                      // Show 'Working' message
     void msgOn(void);                           // Show 'On' message
-	  void msgOff(void);                          // Show 'Off' message
-	  void msgCold(void);                         // Show 'Cold' message
-	  void msgFail(void);                         // Show 'Fail' message
-	  void msgTune(void);                         // Show 'Tune' message
-	  void msgCelsius(void);                      // Show 'Cels.' message
-	  void msgFarneheit(void);                    // Show 'Faren.' message
+    void msgOff(void);                          // Show 'Off' message
+    void msgCold(void);                         // Show 'Cold' message
+    void msgFail(void);                         // Show 'Fail' message
+    void msgTune(void);                         // Show 'Tune' message
+    void msgCelsius(void);                      // Show 'Cels.' message
+    void msgFarneheit(void);                    // Show 'Faren.' message
     void msgUpper(void);                        // Show 'setting upper temperature' process
     void msgLower(void);                        // Show 'setting lower temperature' process
     void msgDefault();                          // Show 'default' message (load default configuratuin)
     void msgCancel(void);                       // Show 'cancel' message
-    void heating(void) {}                       // Do not animate heating process
-    void cooling(void) {}                       // Do not animate cooling process
+    void msgApply(void);                        // Show 'save message'
     void setupMode(byte mode, byte p = 0);      // Show the configureation mode [0 - 2]
-    void noAnimation(void) {}                   // Switch off the animation
     void show(void) {}                          // No animation ever
     void percent(byte Power);                   // Show the percentage
+  private:
+    bool full_second_line;                      // Whether the second line is full with the message
 };
 
 void DSPL::init(void) {
   LiquidCrystal::begin(8, 2);
   LiquidCrystal::clear();
+  full_second_line = false;
 }
 
 void DSPL::tSet(uint16_t t, bool celsius) {
@@ -470,6 +485,10 @@ void DSPL::tCurr(uint16_t t) {
     return;
   }
   LiquidCrystal::print(buff);
+  if (full_second_line) {
+    LiquidCrystal::print(F("    "));
+    full_second_line = false;
+  }
 }
 
 void DSPL::pSet(byte p) {
@@ -493,14 +512,28 @@ void DSPL::tempLim(byte indx, uint16_t temp) {
   LiquidCrystal::print(buff);
 }
 
+void DSPL::timeToOff(byte sec) {
+  char buff[5];
+  if (sec >= 1000) return;
+  sprintf(buff, " %3d", sec);
+  LiquidCrystal::setCursor(4, 0);
+  LiquidCrystal::print(buff);
+}
+
 void DSPL::msgNoIron(void) {
   LiquidCrystal::setCursor(0, 1);
   LiquidCrystal::print(F("no iron "));
+  full_second_line = true;
 }
 
 void DSPL::msgReady(void) {
   LiquidCrystal::setCursor(4, 0);
   LiquidCrystal::print(F(" rdy"));
+}
+
+void DSPL::msgWorking(void) {
+  LiquidCrystal::setCursor(4, 0);
+  LiquidCrystal::print(F(" wrk"));
 }
 
 void DSPL::msgOn(void) {
@@ -516,6 +549,7 @@ void DSPL::msgOff(void) {
 void DSPL::msgCold(void) {
   LiquidCrystal::setCursor(0, 1);
   LiquidCrystal::print(F("  cold  "));
+  full_second_line = true;
 }
 
 void DSPL::msgFail(void) {
@@ -537,6 +571,7 @@ void DSPL::msgFarneheit(void) {
   LiquidCrystal::setCursor(0, 1);
   LiquidCrystal::print(F("Faren.  "));
 }
+
 void DSPL::msgUpper(void) {
   LiquidCrystal::setCursor(6, 0);
   LiquidCrystal::print(F("up"));
@@ -557,14 +592,26 @@ void DSPL::msgCancel(void) {
   LiquidCrystal::print(F(" cancel "));
 }
 
+void DSPL::msgApply(void) {
+  LiquidCrystal::setCursor(0, 1);
+  LiquidCrystal::print(F(" save   "));
+}
+
 void DSPL::setupMode(byte mode, byte p) {
+  char buff[5];
   LiquidCrystal::clear();
   LiquidCrystal::print(F("setup"));
   LiquidCrystal::setCursor(1,1);
   switch (mode) {
     case 0:
-	  LiquidCrystal::print(F("bright"));
-	  break;
+    LiquidCrystal::print(F("off:"));
+    if (p > 0) {
+      sprintf(buff, "%2dm", p);
+      LiquidCrystal::print(buff);
+    } else {
+      LiquidCrystal::print(" NO");
+    }
+    break;
     case 1:
       LiquidCrystal::print(F("units"));
       LiquidCrystal::setCursor(7,1);
@@ -587,7 +634,7 @@ void DSPL::percent(byte Power) {
 }
 
 //------------------------------------------ class HISTORY ----------------------------------------------------
-#define H_LENGTH 8
+#define H_LENGTH 16
 class HISTORY {
   public:
     HISTORY(void) { len = 0; }
@@ -655,25 +702,30 @@ float HISTORY::gradient(void) {
 
 //------------------------------------------ class PID algoritm to keep the temperature -----------------------
 /*  The PID algoritm 
- *  Un = Kp*(Xs - Xn) + Ki*summ{j=0; j<=n}(Xs - Xj) + Kd(Xn-1 - Xn)
+ *  Un = Kp*(Xs - Xn) + Ki*summ{j=0; j<=n}(Xs - Xj) + Kd(Xn - Xn-1),
+ *  Where Xs - is the setup temperature, Xn - the temperature on n-iteration step
  *  In this program the interactive formulae is used:
- *    Un = Un-1 + Kp*(Xn-1 - Xn) + Ki*(Xs - Xn) + Kd*(2*Xn-1 - Xn - Xn-2)
+ *    Un = Un-1 + Kp*(Xn-1 - Xn) + Ki*(Xs - Xn) + Kd*(Xn-2 + Xn - 2*Xn-1)
  *  With the first step:
  *  U0 = Kp*(Xs - X0) + Ki*(Xs - X0); Xn-1 = Xn;
  */
 class PID {
   public:
-    PID(void) {}
+    PID(void) {
+      Kp = 413;
+      Ki =  56;
+      Kd = 314;
+    }
     void resetPID(int temp = -1);               // reset PID algoritm history parameters
     // Calculate the power to be applied
     int reqPower(int temp_set, int temp_curr, int power);
+    int changePID(byte p, int k);
   private:
-    int  temp_hist[2];                          // previously measured temperature
-    bool  pid_iterate;                          // Weither the inerative PID formulae can be used
+    void  debugPID(int t_set, int t_curr, long kp, long ki, long kd, long delta_p);
+    int   temp_hist[2];                          // previously measured temperature
+    bool  pid_iterate;                          // Whether the inerative PID formulae can be used
+    long  Kp, Ki, Kd;                           // The PID algorithm coefficients multiplied by denominator
     const byte denominator_p = 8;               // The common coefficeient denominator power of 2 (8 means divide by 256)
-    const int Kp = 840;                         // Kp multiplied by denominator
-    const int Ki = 260;                         // Ki multiplied by denominator
-    const int Kd = 45;                          // Kd multiplied by denominator
 };
 
 void PID::resetPID(int temp) {
@@ -685,31 +737,61 @@ void PID::resetPID(int temp) {
     temp_hist[1] = 0;
 }
 
+int PID::changePID(byte p, int k) {
+  switch(p) {
+    case 1:
+      if (k >= 0) Kp = k;
+      return Kp;
+    case 2:
+      if (k >= 0) Ki = k;
+      return Ki;
+    case 3:
+      if (k >= 0) Kd = k;
+      return Kd;
+    default:
+      break;
+  }
+  return 0;
+}
+
 int PID::reqPower(int temp_set, int temp_curr, int power) {
   if (temp_hist[0] == 0) {                      // first, use the direct formulae, not the iterate process
-    long p = (long)Kp*(temp_set - temp_curr) + (long)Ki*(temp_set - temp_curr);
+    long p = Kp*(temp_set - temp_curr) + Ki*(temp_set - temp_curr);
     p += (1 << (denominator_p-1));
     p >>= denominator_p;
     temp_hist[1] = temp_curr;
     if ((temp_set - temp_curr) < 30) {          // If the temperature is near, prepare the PID iteration process
       if (!pid_iterate) {                       // The first loop
-        pid_iterate = true;                   
+        pid_iterate = true;
       } else {                                  // The second loop
         temp_hist[0] = temp_hist[1];            // Now we are redy to use iterate algorythm
       }
     }
     power = p;
   } else {
-    long delta_p = (long)Kp * (temp_hist[1] - temp_curr);
-    delta_p += (long)Ki * (temp_set - temp_curr);
-    delta_p += (long)Kd * (2*temp_hist[1] - temp_hist[0] - temp_curr);
+    long kp = Kp * (temp_hist[1] - temp_curr);
+    long ki = Ki * (temp_set - temp_curr);
+    long kd = Kd * (temp_hist[0] + temp_curr - 2*temp_hist[1]);
+    long delta_p = kp + ki + kd;
     delta_p += (1 << (denominator_p-1));
     delta_p >>= denominator_p;
+//    debugPID(temp_set, temp_curr, kp, ki, kd, delta_p);
     power += delta_p;
     temp_hist[0] = temp_hist[1];
     temp_hist[1] = temp_curr;
   }
   return power;
+}
+
+void PID::debugPID(int t_set, int t_curr, long kp, long ki, long kd, long delta_p) {
+  Serial.print(t_set-t_curr); Serial.print(": ");
+  Serial.print("[ "); Serial.print(temp_hist[0]);
+  Serial.print(", "); Serial.print(temp_hist[1]);
+  Serial.print(", "); Serial.print(t_curr);
+  Serial.print(" ] kp = "); Serial.print(kp);
+  Serial.print(", ki = "); Serial.print(ki);
+  Serial.print(", kd = "); Serial.print(kd);
+  Serial.print("; DP = "); Serial.println(delta_p);
 }
 
 //------------------------------------------ class soldering iron ---------------------------------------------
@@ -728,15 +810,17 @@ class IRON : protected PID {
     void     init(uint16_t t_max, uint16_t t_min);
     void     switchPower(bool On);
     bool     isOn(void)                         { return on; }
-    bool     used(void)                         { int t = h_temp.last(); return ((t > temp_min) && (t < temp_max)); }
     bool     isCold(void)                       { return (h_temp.last() < temp_cold); }
     bool     noIron(void)                       { return no_iron; }
     void     setTempUnits(bool celsius)         { unit_celsius = celsius; }
     bool     getTempUnits(void)                 { return unit_celsius; }
     uint16_t getTemp(void)                      { return temp_set; }
+    uint16_t getCurrTemp(void)                  { return h_temp.last(); }
     uint16_t tempAverage(void)                  { return h_temp.average(); }
     uint16_t tempDispersion(void)               { return h_temp.dispersion(); }
+    uint16_t powerDispersion(void)              { return h_power.dispersion(); }
     byte     getMaxFixedPower(void)             { return max_fixed_power; }
+    int      changePID(byte p, int k)           { return PID::changePID(p, k); }
     void     setTemp(int t);                    // Set the temperature to be keeped
     // Set the temperature to be keeped in human readable units (celsius or farenheit)
     void     setTempHumanUnits(int t);
@@ -747,19 +831,20 @@ class IRON : protected PID {
     byte     hotPercent(void);                  // How hot is the iron (used in the idle state)
     void     keepTemp(void);                    // Main solder iron loop
     bool     fixPower(byte Power);              // Set the specified power to the the soldering iron
+    bool     used(void);                        // Whether the iron was previously used (Hot)
   private:
-    uint16_t temp(void);                        // Read the actual temperature of the soldering iron
-    void     applyPower(void);                  // Check the the power limits and apply power to the heater
-    bool     checkIronConnected(void);          // Check weither the iron is connected
+    uint16_t   temp(void);                      // Read the actual temperature of the soldering iron
+    void       applyPower(void);                // Check the the power limits and apply power to the heater
+    bool       checkIronConnected(void);        // Check Whether the iron is connected
     FastPWMdac fastPWMdac;                      // Power the irom using fastPWMdac
     uint32_t   checkMS;                         // Milliseconds to measure the temperature next time
     uint32_t   check_ironMS;                    // Milliseconds when to check the iron is connected
     byte       hPIN, sPIN, cPIN;                // The heater PIN, the sensor PIN and the current check PIN
     int        power;                           // The soldering station power
     byte       actual_power;                    // The power supplied to the iron
-    bool       on;                              // Weither the soldering iron is on
-    bool       fix_power;                       // Weither the soldering iron is set the fix power
-    bool       no_iron;                         // Weither the iron is connected
+    bool       on;                              // Whether the soldering iron is on
+    bool       fix_power;                       // Whether the soldering iron is set the fix power
+    bool       no_iron;                         // Whether the iron is connected
     bool       unit_celsius;                    // Human readable units for the temparature (celsius or farenheit)
     int        temp_set;                        // The temperature that should be keeped
     uint16_t   temp_min;                        // The minimum temperature (180 centegrees)
@@ -771,7 +856,7 @@ class IRON : protected PID {
     const byte     max_fixed_power = 120;       // Maximum power in fiexed power mode
     const uint16_t period          = 500;       // The period to check the soldering iron temperature, ms
     const int      min_curr        = 10;        // The minimum current value to check the iron is connected
-    const uint32_t check_iron_ms   = 1000;      // The period in ms to check weither the iron is conected
+    const uint32_t check_iron_ms   = 1000;      // The period in ms to check Whether the iron is conected
     const int      no_iron_temp    = 1000;      // The temperature readings when the iron is disconnected
 };
 
@@ -962,6 +1047,11 @@ bool IRON::checkIronConnected(void) {
   return no_iron;
 }
 
+bool IRON::used(void) {
+  uint16_t temp = h_temp.last();
+  return (temp > temp_cold);
+}
+
 //------------------------------------------ class SCREEN ------------------------------------------------------
 class SCREEN {
   public:
@@ -974,13 +1064,13 @@ class SCREEN {
       scr_timeout = 0;
       time_to_return = 0;
     }
-    virtual void init(void) { }
-    virtual void show(void) { }
-    virtual SCREEN* menu(void) {if (this->next != 0) return this->next; else return this; }
-    virtual SCREEN* menu_long(void) { if (this->nextL != 0) return this->nextL; else return this; }
-    virtual void rotaryValue(int16_t value) { }
-    bool isSetup(void){ return (scr_timeout != 0); }
-    void forceRedraw(void) { force_redraw = true; }
+    virtual void init(void)                     { }
+    virtual void show(void)                     { }
+    virtual SCREEN* menu(void)                  { if (this->next != 0) return this->next; else return this; }
+    virtual SCREEN* menu_long(void)             { if (this->nextL != 0) return this->nextL; else return this; }
+    virtual void rotaryValue(int16_t value)     { }
+    bool isSetup(void)                          { return (scr_timeout != 0); }
+    void forceRedraw(void)                      { force_redraw = true; }
     SCREEN* returnToMain(void) {
       if (main && (scr_timeout != 0) && (millis() >= time_to_return)) {
         scr_timeout = 0;
@@ -996,9 +1086,13 @@ class SCREEN {
       scr_timeout = t;
       resetTimeout(); 
     }
+    bool wasRecentlyReset(void) {
+      uint32_t to = (time_to_return - millis()) / 1000;
+      return((scr_timeout - to) < 15);
+    }
   protected:
     bool force_redraw;
-    uint16_t scr_timeout;                       // Timeout is sec. to return to the main screen, canceling all changes
+    uint32_t scr_timeout;                       // Timeout is sec. to return to the main screen, canceling all changes
     uint32_t time_to_return;                    // Time in ms to return to main screen
 };
 
@@ -1024,15 +1118,13 @@ class mainSCREEN : public SCREEN {
     BUZZER*  pBz;                               // Pointer to the simple buzzer instance
     CONFIG*  pCfg;                              // Pointer to the configuration instance
     uint32_t update_screen;                     // Time in ms to switch information on the display
-    bool     used;                              // Weither the iron was used (was hot)
-    bool     cool_notified;                     // Weither there was cold notification played
-    bool     is_celsius;                        // The temperature units (Celsius or farenheit)
-    bool     no_iron;                           // 'No iron connected' message displayed
-	  const uint16_t period = 1000;               // The period to update the screen
+    bool     used;                              // Whether the iron was used (was hot)
+    bool     cool_notified;                     // Whether there was cold notification played
+    bool     is_celsius;                        // The temperature units (Celsius or Farenheit)
+    const uint16_t period = 1000;               // The period to update the screen
 };
 
 void mainSCREEN::init(void) {
-  no_iron = false;
   pIron->switchPower(false);
   uint16_t temp_set = pIron->getTemp();
   is_celsius = pCfg->getTempUnits();
@@ -1042,12 +1134,8 @@ void mainSCREEN::init(void) {
     pEnc->reset(tempH, temp_minC, temp_maxC, 1, 5);
   else
     pEnc->reset(tempH, temp_minF, temp_maxF, 1, 5);
-  update_screen = millis();
+  update_screen = 0;
   pD->clear();
-  pD->tSet(tempH, is_celsius);
-  pD->msgOff();
-  forceRedraw();
-  uint16_t temp = pIron->tempAverage();
   used = pIron->used();
   cool_notified = !used;
   if (used) {                                   // the iron was used, we should save new data in EEPROM
@@ -1065,60 +1153,60 @@ void mainSCREEN::show(void) {
   if ((!force_redraw) && (millis() < update_screen)) return;
 
   force_redraw = false;
-  update_screen = millis();
+  update_screen = millis() + period;
 
+  uint16_t temp_set = pIron->getTemp();
+  temp_set = pIron->temp2humanUnits(temp_set);
+  pD->tSet(temp_set, is_celsius);
+  pD->msgOff();
+  
   if (pIron->noIron()) {                        // No iron connected
     pD->msgNoIron();
-    no_iron = true;                             // 'no iron' message is displayed
     return;
-  } else {
-   if (no_iron) {                               // clear the 'no iron' message
-    no_iron = false;
-    pD->clear();
-    uint16_t temp_set = pIron->getTemp();
-    temp_set = pIron->temp2humanUnits(temp_set);
-    pD->tSet(temp_set, is_celsius);
-    pD->msgOff();
-   }
   }
 
-  update_screen += period;
   uint16_t temp = pIron->tempAverage();
   temp = pIron->temp2humanUnits(temp);
-  if (used && pIron->isCold()) {
-    pD->msgCold();
+  if (pIron->isCold()) {
+    if (used)
+      pD->msgCold();
+    else
+      pD->tCurr(temp);
     if (!cool_notified) {
-      pBz->shortBeep();
+      pBz->lowBeep();
       cool_notified = true;
     }
   } else {
     pD->tCurr(temp);
-    pD->msgOff();
   }
 }
 
 //---------------------------------------- class workSCREEN [the soldering iron is ON] -------------------------
 class workSCREEN : public SCREEN {
   public:
-    workSCREEN(IRON* Iron, DSPL* DSP, ENCODER* Enc, BUZZER* Buzz) {
+    workSCREEN(IRON* Iron, DSPL* DSP, ENCODER* Enc, BUZZER* Buzz, CONFIG* Cfg) {
       update_screen = 0;
       pIron = Iron;
       pD    = DSP;
       pBz   = Buzz;
-      pEnc   = Enc;
+      pEnc  = Enc;
+      pCfg  = Cfg;
       ready = false;
     }
     virtual void init(void);
     virtual void show(void);
     virtual void rotaryValue(int16_t value);
+    virtual SCREEN* returnToMain(void);
   private:
     uint32_t update_screen;                     // Time in ms to update the screen
-    IRON* pIron;                                // Pointer to the iron instance
-    DSPL* pD;                                   // Pointer to the DSPLay instance
-    BUZZER* pBz;                                // Pointer to the simple Buzzer instance
+    IRON*    pIron;                             // Pointer to the iron instance
+    DSPL*    pD;                                // Pointer to the DSPLay instance
+    BUZZER*  pBz;                               // Pointer to the simple Buzzer instance
     ENCODER* pEnc;                              // Pointer to the rotary encoder instance
-    bool ready;                                 // Weither the iron is ready
-	  const uint16_t period = 1000;               // The period to update the screen (ms)
+    CONFIG*  pCfg;                              // Pointer to the configuration instance
+    bool     ready;                             // Whether the iron is ready
+    HISTORY  idle_power;                        // The power supplied to the iron when it is not used
+    const uint16_t period = 1000;               // The period to update the screen (ms)
 };
 
 void workSCREEN::init(void) {
@@ -1135,6 +1223,9 @@ void workSCREEN::init(void) {
   pD->tSet(tempH, is_celsius);
   pD->msgOn();
   forceRedraw();
+  uint16_t to = pCfg->getOffTimeout() * 60;
+  this->setSCRtimeout(to);
+  idle_power.init();
 }
 
 void workSCREEN::rotaryValue(int16_t value) {
@@ -1143,6 +1234,8 @@ void workSCREEN::rotaryValue(int16_t value) {
   update_screen = millis() + period;
   pIron->setTempHumanUnits(value);
   pD->tSet(value, pIron->getTempUnits());
+  idle_power.init();
+  SCREEN::resetTimeout();
 }
 
 void workSCREEN::show(void) {
@@ -1157,18 +1250,49 @@ void workSCREEN::show(void) {
   pD->tCurr(tempH);
   byte p = pIron->appliedPower();
   pD->percent(p);
-  if ((abs(temp_set - temp) < 4) && (pIron->tempDispersion() < 15))  {
-    pD->noAnimation();
+
+  uint16_t td = pIron->tempDispersion();
+  uint16_t pd = pIron->powerDispersion();
+  int ip      = idle_power.average();
+  int ap      = pIron->getAvgPower();
+  if ((temp <= temp_set) && (temp_set - temp <= 3) && (td <= 3) && (pd <= 4)) {
+    idle_power.put(ap);
+  }
+  if (ap - ip >= 2) {    // The iron was used
+    SCREEN::resetTimeout();
+    if (ready) {
+      idle_power.init();
+      idle_power.put(ip+1);
+    }
+  }
+
+  if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 3))  {
     if (!ready) {
+      idle_power.put(ap);
       pBz->shortBeep();
       pD->msgReady();
       ready = true;
+    } else {
+      if (ready && SCREEN::wasRecentlyReset()) {
+        pD->msgWorking();
+      } else {
+        uint32_t to = (time_to_return - millis()) / 1000;
+        if ((scr_timeout > 0) && (to < 100))
+          pD->timeToOff(to);
+        else
+          pD->msgReady();
+      }
     }
-    return;
   }
-  if (!ready && temp < temp_set) {
-    pD->heating();
+}
+
+SCREEN* workSCREEN::returnToMain(void) {
+  if (main && (scr_timeout != 0) && (millis() >= time_to_return)) {
+    scr_timeout = 0;
+    pBz->doubleBeep();
+    return main;
   }
+  return this;
 }
 
 //---------------------------------------- class errorSCREEN [the soldering iron error detected] ---------------
@@ -1201,7 +1325,7 @@ class powerSCREEN : public SCREEN {
     DSPL* pD;                                   // Pointer to the DSPLay instance
     ENCODER* pEnc;                              // Pointer to the rotary encoder instance
     uint32_t update_screen;                     // Time in ms to update the screen
-    bool on;                                    // Weither the power of soldering iron is on
+    bool on;                                    // Whether the power of soldering iron is on
 };
 
 void powerSCREEN::init(void) {
@@ -1213,7 +1337,6 @@ void powerSCREEN::init(void) {
   pIron->fixPower(p);
   pD->clear();
   pD->pSet(p);
-  pD->noAnimation();
 }
 
 void powerSCREEN::show(void) {
@@ -1239,14 +1362,14 @@ SCREEN* powerSCREEN::menu(void) {
   if (on) {
     uint16_t pos = pEnc->read();
     on = pIron->fixPower(pos);
-	  pD->clear();
+    pD->clear();
     pD->pSet(pos);
-	  update_screen = 0;
+    update_screen = 0;
   } else {
     pIron->fixPower(0);
-	  pD->clear();
-	  pD->pSet(0);
-	  pD->msgOff();
+    pD->clear();
+    pD->pSet(0);
+    pD->msgOff();
   }
   return this;
 }
@@ -1280,18 +1403,20 @@ class configSCREEN : public SCREEN {
     ENCODER* pEnc;                              // Pointer to the rotary encoder instance
     CONFIG*  pCfg;                              // Pointer to the config instance
     uint32_t update_screen;                     // Time in ms to update the screen
-    byte mode;                                  // Which parameter to change: 0 - brightness, 1 - C/F, 2 - tuneSCREEN, 3 cancel
-    bool tune;                                  // Weither the parameter is modified
-    bool changed;                               // Weither some configuration parameter has been changed
+    byte mode;                                  // Which parameter to change: 0 - off timeout, 1 - C/F, 2 - tuneSCREEN, 3 cancel
+    bool tune;                                  // Whether the parameter is modifiying
+    bool changed;                               // Whether some configuration parameter has been changed
     bool cels;                                  // Current celsius/farenheit;
+    byte off_timeout;                           // Automatic switch-off timeout in minutes
 };
 
 void configSCREEN::init(void) {
-  mode = 1;
-  pEnc->reset(mode, 1, 3, 1, 0, true);          // 0 - brightness, 1 - C/F, 2 - tuneSCREEN, 3 - cancel
-  tune    = false;
-  changed = false;
-  cels    = pCfg->getTempUnits();
+  mode = 0;
+  pEnc->reset(mode, 0, 4, 1, 0, true);          // 0 - off-timeout, 1 - C/F, 2 - tuneSCREEN, 3 - save, 4 - cancel
+  tune        = false;
+  changed     = false;
+  cels        = pCfg->getTempUnits();
+  off_timeout = pCfg->getOffTimeout();
   pD->clear();
   pD->setupMode(0);
   this->setSCRtimeout(30);
@@ -1301,24 +1426,49 @@ void configSCREEN::show(void) {
   if ((!force_redraw) && (millis() < update_screen)) return;
   force_redraw = false;
   update_screen = millis() + 10000;
-  if ((mode == 1) && tune) {
-    if (cels)
-      pD->msgCelsius();
-    else
-      pD->msgFarneheit();
-    return;
+  switch (mode) {
+    case 0:
+      pD->setupMode(mode, off_timeout);
+      break;
+    case 1:
+      if (tune) {
+        if (cels)
+          pD->msgCelsius();
+        else
+          pD->msgFarneheit();
+      } else {
+        pD->setupMode(mode, cels);
+      }
+      break;
+    case 2:
+      pD->setupMode(mode, cels);
+      break;
+    case 3:
+      pD->msgApply();
+      break;
+    case 4:
+      pD->msgCancel();
+      break;
+    default:
+      break;
   }
-  if (mode == 3)
-    pD->msgCancel();
-  else
-    pD->setupMode(mode, cels);
 }
 
 void configSCREEN::rotaryValue(int16_t value) {
   update_screen = millis() + 10000;
   if (tune) {                                   // tune the temperature units
     changed = true;
-    cels = !value;
+    switch (mode) {
+      case 0:                                   // tuning the switch-off timeout
+        if (value > 0) value += 2;              // The minimum timeout is 3 minutes
+        off_timeout = value;
+        break;
+      case 1:                                   // tunung the temperature units
+        cels = value;
+        break;
+      default:
+        break;
+    }
   } else {
     mode = value;
   }
@@ -1328,18 +1478,25 @@ void configSCREEN::rotaryValue(int16_t value) {
 SCREEN* configSCREEN::menu(void) {
   if (tune) {
     tune = false;
-    pEnc->reset(mode, 1, 3, 1, 0, true);
+    pEnc->reset(mode, 0, 4, 1, 0, true);        // The value has been tuned, return to the menu list mode
   } else {
+    int v = off_timeout;
     switch (mode) {
+      case 0:                                   // automatic switch-off timeout
+        if (v > 0) v -= 2;
+        pEnc->reset(v, 0, 28, 1, 0, false);
+        break;
       case 1:                                   // Celsius / Farenheit
         pEnc->reset(cels, 0, 1, 1, 0, true);
         break;
       case 2:                                   // Calibration
         if (next) return next;
         break;
-      case 3:
+      case 3:                                   // Save configuration data
+        menu_long();
+      case 4:                                   // Return to the main menu
         if (main) return main;
-        break;
+        return this;
     }
     tune = true;
   }
@@ -1350,7 +1507,7 @@ SCREEN* configSCREEN::menu(void) {
 SCREEN* configSCREEN::menu_long(void) {
   if (nextL) {
     if (changed) {
-      pCfg->saveConfig(cels);
+      pCfg->saveConfig(off_timeout, cels);
       pIron->setTempUnits(cels);
     }
     return nextL;
@@ -1381,7 +1538,7 @@ class tuneSCREEN : public SCREEN {
     BUZZER* pBz;                                // Pointer to the simple Buzzer instance
     CONFIG* pCfg;                               // Pointer to the configuration class
     byte mode;                                  // Which temperature to tune [0-3]: select, up temp, low temp, defaults
-    bool arm_beep;                              // Weither beep is armed
+    bool arm_beep;                              // Whether beep is armed
     byte max_power;                             // Maximum possible power to be applied
     uint32_t update_screen;                     // Time in ms to switch information on the display
     uint16_t tul[2];                            // upper & lower temp
@@ -1392,9 +1549,9 @@ void tuneSCREEN::init(void) {
   max_power = pIron->getMaxFixedPower();
   mode = 0;                                     // select the element from the list
   pul[0] = 75; pul[1] = 20;
-  pEnc->reset(0, 0, 3, 1, 1, true);             // 0 - up temp, 1 - low temp, 2 - defaults, 3 - cancel
+  pEnc->reset(0, 0, 4, 1, 1, true);             // 0 - up temp, 1 - low temp, 2 - defaults, 3 - save, 4 - cancel
   update_screen = millis();
-  arm_beep = true;
+  arm_beep = false;
   tul[0] = tul[1] = 0;
   pD->clear();
   pD->msgTune();
@@ -1409,6 +1566,9 @@ void tuneSCREEN::rotaryValue(int16_t value) {
         pD->msgDefault();
         break;
       case 3:
+        pD->msgApply();
+        break;
+      case 4:
         pD->msgCancel();
         break;
       default:
@@ -1438,7 +1598,7 @@ void tuneSCREEN::show(void) {
     else
       pD->msgLower();
   }
-  if (arm_beep && (pIron->tempDispersion() < 15)) {
+  if (arm_beep && (pIron->tempDispersion() < 5)) {
     pBz->shortBeep();
     arm_beep = false;
   }
@@ -1452,7 +1612,13 @@ SCREEN* tuneSCREEN::menu(void) {                // The rotary button pressed
       if (main) return main;                    // Return to the main screen
     }
     if (val == 3) {
-      if (nextL) return nextL;                  // Return to the previous menu
+      menu_long();                              // Save the configuration to the EEPROM
+      if (next) return next;
+      return this;
+    }
+    if (val == 4) {
+      if (next) return next;                    // Return to the previous menu
+      return this;
     }
     mode = val + 1;
     pD->clear();
@@ -1469,16 +1635,16 @@ SCREEN* tuneSCREEN::menu(void) {                // The rotary button pressed
     }
     pEnc->reset(pul[mode-1], 0, max_power, 1, 5);
     pIron->fixPower(pul[mode-1]);               // Switch on the soldering iron
+    arm_beep = true;
   } else {                                      // upper or lower temperature limit just setup     
     pul[mode-1] = pEnc->read();                 // The supplied power
     tul[mode-1] = pIron->tempAverage();
     pD->clear();
     pD->msgTune();
-    pEnc->reset(mode-1, 0, 3, 1, 1, true);      // 0 - up temp, 1 - low temp, 2 - defaults, 3 -cancel
+    pEnc->reset(mode-1, 0, 4, 1, 1, true);      // 0 - up temp, 1 - low temp, 2 - defaults, 3 - save, 4 - cancel
     mode = 0;
     pIron->fixPower(0);
   }
-  arm_beep = true;
   force_redraw = true;
   return this;
 }
@@ -1490,9 +1656,104 @@ SCREEN* tuneSCREEN::menu_long(void) {
     if (!tul[i]) all_data = false;
   }
   if (all_data) {                               // save calibration data. Config will be written to the EEPROM later on
-    pCfg->saveCalibrationData(tul[0], tul[1]); 
+    pCfg->saveCalibrationData(tul[0], tul[1]);
+    pIron->init(tul[0], tul[1]);
   }
-  if (nextL) return nextL;
+  if (next) return next;
+  return this;
+}
+
+//---------------------------------------- class pidSCREEN [tune the PID coefficients] -------------------------
+class pidSCREEN : public SCREEN {
+  public:
+    pidSCREEN(IRON* Iron, ENCODER* ENC) {
+      pIron = Iron;
+      pEnc = ENC;
+    }
+    virtual void init(void);
+    virtual SCREEN* menu(void);
+    virtual SCREEN* menu_long(void);
+    virtual void show(void);
+    virtual void rotaryValue(int16_t value);
+  private:
+    IRON* pIron;                                // Pointer to the iron instance
+    ENCODER* pEnc;                              // Pointer to the rotary encoder instance
+    byte mode;                                  // Which temperature to tune [0-3]: select, Kp, Ki, Kd
+    int temp_set;
+};
+
+void pidSCREEN::init(void) {
+  temp_set = pIron->getTemp();
+  mode = 0;                                     // select the element from the list
+  pEnc->reset(1, 1, 3, 1, 1, true);             // 1 - Kp, 2 - Ki, 3 - Kd
+  Serial.println("Select the coefficient (Kp)");
+}
+
+void pidSCREEN::rotaryValue(int16_t value) {
+  if (mode == 0) {                              // No limit is selected, list the menu
+    switch (value) {
+      case 1:
+        Serial.println("Kp");
+        break;
+      case 2:
+        Serial.println("Ki");
+        break;
+      case 3:
+      default:
+       Serial.println("Kd");
+       break;
+    }
+  } else {
+    switch (mode) {
+      case 1:
+        Serial.print("Kp = ");
+        pIron->changePID(mode, value);
+        break;
+      case 2:
+        Serial.print("Ki = ");
+        break;
+      case 3:
+      default:
+        Serial.print("Kd = ");
+        break;
+    }
+    pIron->changePID(mode, value);
+    Serial.println(value);
+  }
+}
+
+void pidSCREEN::show(void) {
+  if (pIron->isOn()) {
+    char buff[60];
+    int temp    = pIron->getCurrTemp();
+    uint16_t td = pIron->tempDispersion();
+    uint16_t pd = pIron->powerDispersion();
+    sprintf(buff, "%3d: td = %3d, pd = %3d --- ", temp_set - temp, td, pd);
+    Serial.println(buff);
+    //if ((temp_set - temp) > 30) Serial.println("");
+  }
+  delay(500);
+}
+
+SCREEN* pidSCREEN::menu(void) {                 // The rotary button pressed
+  if (mode == 0) {                              // select upper or lower temperature limit
+    mode = pEnc->read();
+    int k = pIron->changePID(mode, -1);
+    pEnc->reset(k, 0, 5000, 1, 5);
+  } else {                                      // upper or lower temperature limit just setup     
+    mode = 0;
+    pEnc->reset(1, 1, 3, 1, 1, true);           // 1 - Kp, 2 - Ki, 3 - Kd
+  }
+  return this;
+}
+
+SCREEN* pidSCREEN::menu_long(void) {
+  bool on = pIron->isOn();
+  pIron->switchPower(!on);
+  if (on)
+    Serial.println("The iron is OFF");
+  else
+    Serial.println("The iron is ON");
   return this;
 }
 //=================================== End of class declarations ================================================
@@ -1505,17 +1766,19 @@ CONFIG     ironCfg;
 BUZZER     simpleBuzzer(buzzerPIN);
 
 mainSCREEN   offScr(&iron, &disp, &rotEncoder, &simpleBuzzer, &ironCfg);
-workSCREEN   wrkScr(&iron, &disp, &rotEncoder, &simpleBuzzer);
+workSCREEN   wrkScr(&iron, &disp, &rotEncoder, &simpleBuzzer, &ironCfg);
 errorSCREEN  errScr(&disp);
 powerSCREEN  powerScr(&iron, &disp, &rotEncoder);
 configSCREEN cfgScr(&iron, &disp, &rotEncoder, &ironCfg);
 tuneSCREEN   tuneScr(&iron, &disp, &rotEncoder, &simpleBuzzer, &ironCfg);
+pidSCREEN    pidScr(&iron, &rotEncoder);
 
 SCREEN *pCurrentScreen = &offScr;
+//SCREEN *pCurrentScreen = &pidScr;
 
 // the setup routine runs once when you press reset:
 void setup() {
-//Serial.begin(115200);
+//  Serial.begin(115200);
   disp.init();
 
   // Load configuration parameters
@@ -1540,13 +1803,14 @@ void setup() {
   offScr.nextL   = &cfgScr;
   wrkScr.next    = &offScr;
   wrkScr.nextL   = &powerScr;
+  wrkScr.main    = &offScr;
   errScr.next    = &offScr;
   errScr.nextL   = &offScr;
   powerScr.nextL = &wrkScr;
   cfgScr.next    = &tuneScr;
   cfgScr.nextL   = &offScr;
   cfgScr.main    = &offScr;
-  tuneScr.nextL  = &cfgScr;
+  tuneScr.next   = &cfgScr;
   tuneScr.main   = &offScr;
   pCurrentScreen->init();
 
@@ -1617,4 +1881,5 @@ void loop() {
   disp.show();
   delay(10);
 }
+
 
