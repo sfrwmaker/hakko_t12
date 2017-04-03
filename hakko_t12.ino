@@ -1078,8 +1078,8 @@ void IRON::switchPower(bool On) {
 
 void IRON::checkIron(void) {
   if (millis() < check_ironMS) return;
-
   check_ironMS = millis() + check_iron_ms;
+  
   if (actual_power == 0) {                      // The IRON is switched-off
     fastPWM.duty(max_power >> 2);               // Quater of maximap power
     uint16_t curr = analogRead(cPIN);           // Check the current through the IRON
@@ -1134,7 +1134,7 @@ void IRON::keepTemp(void) {
     h_power.put(actual_power);
     fastPWM.duty(actual_power);
   } else {
-    actual_power = 0;
+    if (!fix_power) actual_power = 0;
   }
 
 }
@@ -1513,7 +1513,7 @@ class powerSCREEN : public SCREEN {
     IRON_CFG* pCfg;                             // Pointer to the configuration instance
     uint32_t  update_screen;                    // Time in ms to update the screen
     bool on;                                    // Whether the power of soldering IRON is on
-    const uint16_t period = 16;                 // The period in ms to update the screen
+    const uint16_t period = 1000;               // The period in ms to update the screen
 };
 
 void powerSCREEN::init(void) {
@@ -1537,8 +1537,8 @@ void powerSCREEN::show(void) {
 
 void powerSCREEN::rotaryValue(int16_t value) {
   pD->pSet(value);
-  if (on)
-    pIron->fixPower(value);
+  pIron->fixPower(value);
+  on = true;
   update_screen = millis() + (period * 2);
 }
 
@@ -1549,13 +1549,12 @@ SCREEN* powerSCREEN::menu(void) {
     on = pIron->fixPower(pos);
     pD->clear();
     pD->pSet(pos);
-    forceRedraw();
   } else {
     pIron->fixPower(0);
     pD->clear();
     pD->pSet(0);
-    pD->msgOff();
   }
+  forceRedraw();
   return this;
 }
 
@@ -1893,6 +1892,7 @@ class tuneSCREEN : public SCREEN {
 };
 
 void tuneSCREEN::init(void) {
+  pIron->switchPower(false);
   max_power = pIron->getMaxFixedPower();
   pEnc->reset(75, 0, max_power, 1, 5);          // Rotate the encoder to change the power supplied
   arm_beep = false;
