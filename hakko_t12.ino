@@ -51,7 +51,7 @@ const uint32_t     check_period = 100;          // The IRON temperature check pe
  * byte CRC                              the checksum
 */
 struct cfg {
-  uint32_t calibration[max_tips];               // The temperature calibration data for soldering tips. (3 reference points: 180, 300, 450 Centegrees)
+  uint32_t calibration[max_tips];               // The temperature calibration data for soldering tips. (3 reference points: 200, 300, 400 Centegrees)
   uint16_t temp;                                // The preset temperature of the IRON in degrees (Celsius or Farenheit)
   byte     tip_index;                           // Current tip index [0 - max_tips -1]
   byte     off_timeout;                         // The Automatic switch-off timeout in minutes [0 - 30]
