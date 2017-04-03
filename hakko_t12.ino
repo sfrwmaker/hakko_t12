@@ -587,8 +587,6 @@ class DSPL : protected LiquidCrystal {
     void msgTune(void);                         // Show 'Tune' message
     void msgCelsius(void);                      // Show 'Cels.' message
     void msgFarneheit(void);                    // Show 'Faren.' message
-    void msgUpper(void);                        // Show 'setting upper temperature' process
-    void msgLower(void);                        // Show 'setting lower temperature' process
     void msgDefault();                          // Show 'default' message (load default configuratuin)
     void msgCancel(void);                       // Show 'cancel' message
     void msgApply(void);                        // Show 'save' message
@@ -725,16 +723,6 @@ void DSPL::msgCelsius(void) {
 void DSPL::msgFarneheit(void) {
   LiquidCrystal::setCursor(0, 1);
   LiquidCrystal::print(F("Faren.  "));
-}
-
-void DSPL::msgUpper(void) {
-  LiquidCrystal::setCursor(6, 0);
-  LiquidCrystal::print(F("up"));
-}
-
-void DSPL::msgLower(void) {
-  LiquidCrystal::setCursor(6, 0);
-  LiquidCrystal::print(F("lo"));
 }
 
 void DSPL::msgDefault() {
