@@ -576,7 +576,6 @@ class DSPL : protected LiquidCrystal {
     void tSet(uint16_t t, bool celsuis);        // Show the temperature set
     void tCurr(uint16_t t);                     // Show The current temperature
     void pSet(byte p);                          // Show the power set
-    void tempLim(byte indx, uint16_t temp);     // Show the upper or lower temperature limit
     void timeToOff(byte sec);                   // Show the time to automatic off the IRON
     void msgReady(void);                        // Show 'Ready' message
     void msgWorking(void);                      // Show 'Working' message
@@ -655,20 +654,6 @@ void DSPL::pSet(byte p) {
   char buff[6];
   sprintf(buff, "P:%3d", p);
   LiquidCrystal::setCursor(0, 0);
-  LiquidCrystal::print(buff);
-}
-
-void DSPL::tempLim(byte indx, uint16_t temp) {
-  char buff[9];
-  if (indx == 0) {
-    buff[0] = 'u';
-    buff[1] = 'p';
-  } else {
-    buff[0] = 'l';
-    buff[1] = 'o';
-  }
-  sprintf(&buff[2], ": %3d ", temp);
-  LiquidCrystal::setCursor(0, 1);
   LiquidCrystal::print(buff);
 }
 
