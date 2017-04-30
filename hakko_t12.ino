@@ -1,5 +1,6 @@
 /*
- * Soldering IRON controller for hakko t12 tips using interrupts from the Timer1 to check the temperature
+ * Soldering IRON controller for hakko t12 tips built on atmega328 microcontroller running 16 MHz
+ * The controller is using interrupts from the Timer1 to check the temperature
  * The IRON heater is managed by pin D10 with FastPWM function usint Timer1
  * Timer1 runs with prescale 1 through 0 to 255 and back, switching the D10 pin each time
  * The PWM frequency on the pin D10 is 31250 Hz
@@ -612,7 +613,9 @@ void DSPL::tip(byte index, bool top) {
   char buff[5];
   byte i = 0;
   const char *p = tip_name[index];
-  while ((i < 4 ) && (buff[i] = *p++)) ++i;
+  for ( ; i < 4; ++i)
+    if (!(buff[i] = *p++))
+      break;
   for ( ; i < 4; ++i) buff[i] = ' ';
   buff[4] = '\0';
   byte y = 1; if (top) y = 0;
@@ -764,11 +767,11 @@ void DSPL::percent(byte Power) {
 }
 
 void DSPL::calibrated(bool calibrated) {
-  char buff[6];
-  for (byte i = 0; i < 5; ++i) buff[i] = ' ';
-  if (!calibrated) buff[4] = '*';
-  buff[5] = '\0';
-  LiquidCrystal::setCursor(3, 1);
+  char buff[5];
+  for (byte i = 0; i < 4; ++i) buff[i] = ' ';
+  if (!calibrated) buff[3] = '*';
+  buff[4] = '\0';
+  LiquidCrystal::setCursor(4, 1);
   LiquidCrystal::print(buff);
 }
 
@@ -860,14 +863,14 @@ float HISTORY::gradient(void) {
 class PID {
   public:
     PID(void) {
-      Kp = 413;
-      Ki = 300;
-      Kd =  98;
+      Kp = 512;
+      Ki = 256;
+      Kd =  64;
     }
     void resetPID(int temp = -1);               // reset PID algoritm history parameters
     // Calculate the power to be applied
-    int reqPower(int temp_set, int temp_curr);
-    int changePID(byte p, int k);
+    long reqPower(int temp_set, int temp_curr);
+    int  changePID(byte p, int k);
   private:
     void  debugPID(int t_set, int t_curr, long kp, long ki, long kd, long delta_p);
     int   temp_h0, temp_h1;                     // previously measured temperature
@@ -906,7 +909,7 @@ int PID::changePID(byte p, int k) {
   return 0;
 }
 
-int PID::reqPower(int temp_set, int temp_curr) {
+long PID::reqPower(int temp_set, int temp_curr) {
   if (temp_h0 == 0) {
     // When the temperature is near the preset one, reset the PID and prepare iterative formulae                        
     if ((temp_set - temp_curr) < 30) {
@@ -930,7 +933,7 @@ int PID::reqPower(int temp_set, int temp_curr) {
   temp_h1 = temp_curr;
   long pwr = power + (1 << (denominator_p-1));  // prepare the power to delete by denominator, roud the result
   pwr >>= denominator_p;                        // delete by the denominator
-  return int(pwr);
+  return pwr;
 }
 
 //------------------------- class FastPWM operations using Timer1 on pin D10 at 31250 Hz ----------------------
@@ -979,7 +982,7 @@ class IRON : protected PID {
     uint16_t powerDispersion(void)              { return h_power.dispersion(); }
     byte     getMaxFixedPower(void)             { return max_fixed_power; }
     int      changePID(byte p, int k)           { return PID::changePID(p, k); }
-    void     checkIron(void);                   // Check the IRON, stop it in case of emergency
+    bool     checkIron(void);                   // Check the IRON, return true if the iron is not connected
     void     keepTemp(void);                    // Keep the IRON temperature, called by Timer1 interrupt
     byte     appliedPower(void);                // Power applied to the IRON in percents
     void     setTemp(uint16_t t);               // Set the temperature to be keeped (internal units)
@@ -987,12 +990,12 @@ class IRON : protected PID {
     bool     fixPower(byte Power);              // Set the specified power to the the soldering IRON
   private:
     FastPWM  fastPWM;                           // Power the irom using fast PWM through D10 pin using Timer1
-    uint32_t check_ironMS;                      // Milliseconds when to check the IRON is connected
     byte     sPIN, cPIN;                        // The sensor PIN and the current check PIN
-    int      power;                             // The soldering station power, calculated by the PID algorithm
+    long     power;                             // The soldering station power, calculated by the PID algorithm
     byte     actual_power;                      // The power supplied to the IRON
     bool     fix_power;                         // Whether the soldering IRON is set the fix power
     uint16_t temp_set;                          // The temperature that should be keeped
+    uint32_t check_iron_ms;                     // The time in ms when check the IRON next time
     volatile bool on;                           // Whether the soldering IRON is on
     volatile bool chill;                        // Whether the IRON should be cooled (preset temp is lower than current)
     volatile bool no_iron;                      // Whether the IRON is disconnected
@@ -1001,8 +1004,8 @@ class IRON : protected PID {
     const byte     max_power       = 250;       // maximum power to the IRON
     const byte     max_fixed_power = 120;       // Maximum power in fiexed power mode
     const uint16_t min_curr        = 10;        // The minimum current value to check the IRON is connected
-    const uint32_t check_iron_ms   = 1000;      // The period in ms to check Whether the IRON is conected
     const uint16_t no_iron_temp    = 1000;      // The temperature readings when the IRON is disconnected
+    const uint32_t check_period    = 1000;      // Check the iron period in ms
 };
 
 void IRON::setTemp(uint16_t t) {
@@ -1029,8 +1032,8 @@ void IRON::init(void) {
   fix_power = false;
   power = 0;
   actual_power = 0;
-  check_ironMS = 0;
   no_iron = false;
+  check_iron_ms = 0;
   resetPID();
   h_power.init();
   h_temp.init();
@@ -1049,16 +1052,17 @@ void IRON::switchPower(bool On) {
   h_power.init();
 }
 
-void IRON::checkIron(void) {
-  if (millis() < check_ironMS) return;
-  check_ironMS = millis() + check_iron_ms;
-  
+bool IRON::checkIron(void) {
+  if (millis() < check_iron_ms)
+    return no_iron;
+  check_iron_ms = millis() + check_period;
   if (actual_power == 0) {                      // The IRON is switched-off
-    fastPWM.duty(max_power >> 2);               // Quater of maximap power
-    uint16_t curr = analogRead(cPIN);           // Check the current through the IRON
+    fastPWM.duty(127);               // Quater of maximap power
+    uint16_t curr = 0;
     for (byte i = 0; i < 4; ++i) {              // Make sure we check the current in active phase of PWM signal
       delayMicroseconds(30);
-      curr += analogRead(cPIN);
+      uint16_t c = analogRead(cPIN);            // Check the current through the IRON
+      if (c > curr) curr = c;
     }
     fastPWM.duty(0);
     no_iron = (curr < min_curr);
@@ -1066,13 +1070,14 @@ void IRON::checkIron(void) {
     uint16_t curr = analogRead(cPIN);
     no_iron = (curr < min_curr);
   }
-  
+
   if (!on && !fix_power) {                      // If the soldering IRON is set to be switched off
     fastPWM.duty(0);                            // Surely power off the IRON
   }
   if (on && no_iron) {
     switchPower(false);
   }
+return no_iron;
 }
 
 void IRON::keepTemp(void) {
@@ -1082,7 +1087,6 @@ void IRON::keepTemp(void) {
 
   if (temp < no_iron_temp) {
     h_temp.put(temp);
-    no_iron = false;
   } else {
     no_iron = true;
     h_temp.init();
@@ -1996,9 +2000,10 @@ void pidSCREEN::show(void) {
   if (pIron->isOn()) {
     char buff[60];
     int temp    = pIron->getCurrTemp();
-    uint16_t td = pIron->tempDispersion();
-    uint16_t pd = pIron->powerDispersion();
-    sprintf(buff, "%3d: td = %3d, pd = %3d --- ", temp_set - temp, td, pd);
+    byte     pwr = pIron->getAvgPower();
+    uint16_t td  = pIron->tempDispersion();
+    uint16_t pd  = pIron->powerDispersion();
+    sprintf(buff, "%3d: power = %3d, td = %3d, pd = %3d --- ", temp_set - temp, pwr, td, pd);
     Serial.println(buff);
     //if ((temp_set - temp) > 30) Serial.println("");
   }
@@ -2111,6 +2116,7 @@ void setup() {
   tipScr.nextL   = &offScr;
   tuneScr.next   = &cfgScr;
   tuneScr.main   = &offScr;
+  selScr.nextL   = &tuneScr;
   pCurrentScreen->init();
 }
 
@@ -2125,26 +2131,25 @@ void rotPushChange(void) {
 // The main loop
 void loop() {
   static int16_t  old_pos = rotEncoder.read();
-  static uint32_t no_iron_check = 0;
+  static uint32_t check_replace = 0;            // The time in ms when to check tip for replacement
   
-  iron.checkIron();                             // Periodically check that the IRON works correctrly
-  bool iron_on = iron.isOn();
+  bool no_iron = iron.checkIron();              // Periodically check that the IRON works correctrly
   // the soldering iron failed
-  if (!iron_on && (pCurrentScreen->screenMode() == S_WORK)) {
+  if (!iron.isOn() && (pCurrentScreen->screenMode() == S_WORK)) {
     iron.switchPower(false);
     pCurrentScreen = &errScr;
     pCurrentScreen->init();
   }
 
-  if (millis() >= no_iron_check) {              // If the IRON not connected, show the menu to choose the tip
-    no_iron_check = millis() + 1000;
-    if (pCurrentScreen->screenMode() == S_STANDBY) {
-      SCREEN *nxt = &offScr;
-      if (iron.noIron()) nxt = &selScr;
-      if (pCurrentScreen != nxt) {
-        pCurrentScreen = nxt;
-        pCurrentScreen->init();
-      }
+  if ((pCurrentScreen->screenMode() == S_STANDBY) && (millis () >= check_replace)) {
+    check_replace = millis() + 1000;
+    SCREEN *nxt = &offScr;
+    if (no_iron) {
+      nxt = &selScr;
+    }
+    if (pCurrentScreen != nxt) {
+      pCurrentScreen = nxt;
+      pCurrentScreen->init();
     }
   }
 
