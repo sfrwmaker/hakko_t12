@@ -39,12 +39,13 @@ const uint16_t ambient_tempC = 25;              // Ambient temperature in Celsiu
 
 #define max_tips 5                              // The maximum supported tip number. Maximum value is 253
 const char *tip_name[max_tips] = {"BC2", "D24", "DL32", "DL52", "KR"};
+//#define max_tips 13                              // The maximum supported tip number. Maximum value is 253
 //const char *tip_name[max_tips] = {"BC1", "BC2", "BC3", "BL", "C2", "C3", "D12", "D24", "DL32", "DL52", "IL", "KR", "JL02"};
 
 // The variables for Timer1 operations
 volatile uint16_t  tmr1_count;                  // The count to calculate the temperature and the curent check periods
 volatile bool      iron_off;                    // Whether the IRON is switched off to check the temperature
-const uint32_t     check_period = 100;          // The IRON temperature check period, ms
+const uint32_t     temp_check_period = 20;      // The IRON temperature check period, ms
 
 //------------------------------------------ Configuration data ------------------------------------------------
 /* Config record in the EEPROM has the following format:
@@ -887,9 +888,9 @@ float HISTORY::gradient(void) {
 class PID {
   public:
     PID(void) {
-      Kp = 512;
-      Ki = 256;
-      Kd =  64;
+      Kp =  768;                                // 1024
+      Ki =   32;                                // 48
+      Kd =  328;                                // 1280
     }
     void resetPID(int temp = -1);               // reset PID algoritm history parameters
     // Calculate the power to be applied
@@ -993,6 +994,7 @@ class IRON : protected PID {
       cPIN = check_pin;
       on = false;
       fix_power = false;
+      h_counter = h_max_counter;
     }
     void     init(void);
     void     switchPower(bool On);
@@ -1019,6 +1021,7 @@ class IRON : protected PID {
     uint16_t temp_set;                          // The temperature that should be keeped
     uint32_t check_iron_ms;                     // The time in ms when check the IRON next time
     bool     disconnected;                      // Whether no current through the IRON (the iron disconnected)
+    int      h_counter;                         // Put the temperature and power to the history, when the counter become 0 
     volatile bool on;                           // Whether the soldering IRON is on
     volatile bool chill;                        // Whether the IRON should be cooled (preset temp is lower than current)
     HISTORY  h_power;                           // The history queue of power applied values
@@ -1028,6 +1031,7 @@ class IRON : protected PID {
     const uint16_t min_curr        = 10;        // The minimum current value to check the IRON is connected
     const uint16_t no_iron_temp    = 1000;      // The temperature readings when the IRON is disconnected
     const uint32_t check_period    = 1000;      // Check the iron period in ms
+    const uint16_t h_max_counter   = 500 / temp_check_period;     // Puth the history data twice a second
 };
 
 void IRON::setTemp(uint16_t t) {
@@ -1110,9 +1114,13 @@ void IRON::keepTemp(void) {
     fastPWM.duty(actual_power);
 
   if (temp < no_iron_temp) {
-    h_temp.put(temp);
+    if (--h_counter < 0) {
+      h_temp.put(temp);
+      h_counter = h_max_counter;
+    }
   } else {                                      // When the IRON disconnected, the temperature readings become too high
     h_temp.init();
+    h_counter = h_max_counter;
   }
 
   if (on) {
@@ -1131,7 +1139,8 @@ void IRON::keepTemp(void) {
     int p = constrain(power, 0, max_power);
     if (temp > (temp_set + 100)) p = 0;         // Prevent the overheating (about 50 Celsius)
     actual_power = p & 0xff;
-    h_power.put(actual_power);
+    if (h_counter == 1)
+      h_power.put(actual_power);
     fastPWM.duty(actual_power);
   } else {
     if (!fix_power) actual_power = 0;
@@ -1391,6 +1400,7 @@ class workSCREEN : public SCREEN {
     uint32_t  auto_off_notified;                // The time (in ms) when the automatic power-off was notified
     HISTORY   idle_power;                       // The power supplied to the IRON when it is not used
     const uint16_t period = 1000;               // The period to update the screen (ms)
+    const int      iron_used_diff = 3;          // The threshold difference between the idle power and the current one 
 };
 
 void workSCREEN::init(void) {
@@ -1442,7 +1452,7 @@ void workSCREEN::show(void) {
   if ((temp <= temp_set) && (temp_set - temp <= 3) && (td <= 3) && (pd <= 4)) {
     idle_power.put(ap);
   }
-  if (ap - ip >= 2) {                           // The IRON was used
+  if (ap - ip >= iron_used_diff) {              // The IRON was used
     SCREEN::resetTimeout();
     if (ready) {
       idle_power.init();
@@ -1451,7 +1461,7 @@ void workSCREEN::show(void) {
     }
   }
 
-  if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 3))  {
+  if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 3) && (ap > 0))  {
     if (!ready) {
       idle_power.put(ap);
       pBz->shortBeep();
@@ -1980,6 +1990,7 @@ class pidSCREEN : public SCREEN {
     virtual void show(void);
     virtual void rotaryValue(int16_t value);
   private:
+    void     showCfgInfo(void);                 // show the main config information: Temp set and PID coefficients
     IRON*    pIron;                             // Pointer to the IRON instance
     ENCODER* pEnc;                              // Pointer to the rotary encoder instance
     byte     mode;                              // Which temperature to tune [0-3]: select, Kp, Ki, Kd
@@ -1992,18 +2003,13 @@ void pidSCREEN::init(void) {
   temp_set = pIron->getTemp();
   mode = 0;                                     // select the element from the list
   pEnc->reset(1, 1, 4, 1, 1, true);             // 1 - Kp, 2 - Ki, 3 - Kd, 4 - temp 
-  Serial.println("Select the coefficient (Kp)");
+  showCfgInfo();
+  Serial.println("");
 }
 
 void pidSCREEN::rotaryValue(int16_t value) {
   if (mode == 0) {                              // No limit is selected, list the menu
-    Serial.print("[");
-    for (byte i = 1; i < 4; ++i) {
-      int k = pIron->changePID(i, -1);
-      Serial.print(k, DEC);
-      if (i < 3) Serial.print(", ");
-    }
-    Serial.print("]; ");
+    showCfgInfo();
     switch (value) {
       case 1:
         Serial.println("Kp");
@@ -2084,6 +2090,18 @@ SCREEN* pidSCREEN::menu_long(void) {
     Serial.println("The iron is ON");
   return this;
 }
+
+void pidSCREEN::showCfgInfo(void) {
+  Serial.print(F("Temp set: "));
+  Serial.print(temp_set, DEC);
+  Serial.print(F(", PID: ["));
+  for (byte i = 1; i < 4; ++i) {
+    int k = pIron->changePID(i, -1);
+    Serial.print(k, DEC);
+    if (i < 3) Serial.print(", ");
+  }
+  Serial.print("]; ");
+}
 //=================================== End of class declarations ================================================
 DSPL       disp(LCD_RS_PIN, LCD_E_PIN, LCD_DB4_PIN, LCD_DB5_PIN, LCD_DB6_PIN, LCD_DB7_PIN);
 ENCODER    rotEncoder(R_MAIN_PIN, R_SECD_PIN);
@@ -2111,7 +2129,7 @@ SCREEN *pCurrentScreen = &offScr;
  * Interrupt routine on Timer1 overflow, @31250 Hz
  * keepTemp() function takes about 160 mks, 5 ticks
  */
-const uint32_t period_ticks = (31250 * check_period)/1000-33-5;
+const uint32_t period_ticks = (31250 * temp_check_period)/1000-33-5;
 ISR(TIMER1_OVF_vect) {
   if (iron_off) {                                     // The IRON is switched off, we need to chack the temperature
     if (++tmr1_count >= 33) {                         // about 1 millisecond
@@ -2134,7 +2152,7 @@ ISR(TIMER1_OVF_vect) {
 
 // the setup routine runs once when you press reset:
 void setup() {
-  //Serial.begin(9600);
+  //Serial.begin(115200);
   disp.init();
 
   // Load configuration parameters
