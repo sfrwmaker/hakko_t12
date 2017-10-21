@@ -884,13 +884,16 @@ float HISTORY::gradient(void) {
  *    Un = Un-1 + Kp*(Xn-1 - Xn) + Ki*(Xs - Xn) + Kd*(Xn-2 + Xn - 2*Xn-1)
  *  With the first step:
  *  U0 = Kp*(Xs - X0) + Ki*(Xs - X0); Xn-1 = Xn;
+ *  
+ *  PID coefficients history:
+ *  10/14/2017  [768, 32, 328]
  */
 class PID {
   public:
     PID(void) {
-      Kp =  768;                                // 1024
-      Ki =   32;                                // 48
-      Kd =  328;                                // 1280
+      Kp = 2009;
+      Ki =   16;
+      Kd = 2048;
     }
     void resetPID(int temp = -1);               // reset PID algoritm history parameters
     // Calculate the power to be applied
@@ -2070,7 +2073,7 @@ SCREEN* pidSCREEN::menu(void) {                 // The rotary button pressed
     mode = pEnc->read();
     if (mode != 4) {
       int k = pIron->changePID(mode, -1);
-      pEnc->reset(k, 0, 5000, 1, 5);
+      pEnc->reset(k, 0, 10000, 1, 10);
     } else {
       pEnc->reset(temp_set, 0, 970, 1, 5);
     }
