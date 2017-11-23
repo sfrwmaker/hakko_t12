@@ -1,4 +1,4 @@
-/*
+ /*
  * Soldering IRON controller for hakko t12 tips built on atmega328 microcontroller running 16 MHz
  * The controller is using interrupts from the Timer1 to generate high-frequence PWM signal on port D10
  * to silently heat the IRON and periodically check the IRON temperature on overflow interrupts
@@ -898,7 +898,7 @@ class PID {
     void resetPID(int temp = -1);               // reset PID algoritm history parameters
     // Calculate the power to be applied
     long reqPower(int temp_set, int temp_curr);
-    int  changePID(byte p, int k);
+    int  changePID(byte p, int k);              // set or get (if parameter < 0) PID parameter
   private:
     void  debugPID(int t_set, int t_curr, long kp, long ki, long kd, long delta_p);
     int   temp_h0, temp_h1;                     // previously measured temperature
@@ -1015,7 +1015,9 @@ class IRON : protected PID {
     void     setTemp(uint16_t t);               // Set the temperature to be keeped (internal units)
     byte     getAvgPower(void);                 // Average applied power
     bool     fixPower(byte Power);              // Set the specified power to the the soldering IRON
+    void     initTempHistory(void)              { h_counter = h_max_counter; h_temp.init(); }
   private:
+    int      empAverage(int v);                 // The exponential average value of the IRON current
     FastPWM  fastPWM;                           // Power the irom using fast PWM through D10 pin using Timer1
     byte     sPIN, cPIN;                        // The sensor PIN and the current check PIN
     long     power;                             // The soldering station power, calculated by the PID algorithm
@@ -1029,12 +1031,15 @@ class IRON : protected PID {
     volatile bool chill;                        // Whether the IRON should be cooled (preset temp is lower than current)
     HISTORY  h_power;                           // The history queue of power applied values
     HISTORY  h_temp;                            // The history queue of the temperature
+    long     emp_current;                       // Exponential average value for the current through the IRON
     const byte     max_power       = 210;       // maximum power to the IRON
     const byte     max_fixed_power = 120;       // Maximum power in fiexed power mode
     const uint16_t min_curr        = 10;        // The minimum current value to check the IRON is connected
     const uint16_t no_iron_temp    = 1000;      // The temperature readings when the IRON is disconnected
-    const uint32_t check_period    = 1000;      // Check the iron period in ms
-    const uint16_t h_max_counter   = 500 / temp_check_period;     // Puth the history data twice a second
+    const uint32_t check_period    = 503;       // Check the iron period in ms
+    const uint16_t h_max_counter   = 500 / temp_check_period;     // Put the history data twice a second
+    
+    const byte     emp_k = 5;                   // The exponential average coefficient
 };
 
 void IRON::setTemp(uint16_t t) {
@@ -1064,8 +1069,10 @@ void IRON::init(void) {
   disconnected = false;
   check_iron_ms = 0;
   resetPID();
+  h_counter = h_max_counter;
   h_power.init();
   h_temp.init();
+  emp_current = 0;
 }
 
 void IRON::switchPower(bool On) {
@@ -1089,12 +1096,15 @@ bool IRON::checkIron(void) {
   uint16_t curr = 0;
   if (actual_power == 0) {                      // The IRON is switched-off
     fastPWM.duty(127);                          // Quater of maximap power
-    for (byte i = 0; i < 4; ++i) {              // Make sure we check the current in active phase of PWM signal
-      delayMicroseconds(30);
+    for (byte i = 0; i < 5; ++i) {              // Make sure we check the current in active phase of PWM signal
+      delayMicroseconds(31);
       uint16_t c = analogRead(cPIN);            // Check the current through the IRON
-      if (c > curr) curr = c;
+      if (c > curr) curr = c;                   // The maximum value
     }
     fastPWM.duty(0);
+    if (curr > min_curr * 2)                    // Do not put big values in to the history 
+      curr = min_curr * 2;                      // This is enough to ensure the IRON is connected
+    curr = empAverage(curr);                    // Calculate exponential average value of the current
   } else {
     curr = analogRead(cPIN);
   }
@@ -1116,14 +1126,11 @@ void IRON::keepTemp(void) {
   if (actual_power > 0)                         // Restore the power applied to the IRON
     fastPWM.duty(actual_power);
 
-  if (temp < no_iron_temp) {
+  if (temp < no_iron_temp) {                    // Do not save to the history readings when the IRON is disconnected
     if (--h_counter < 0) {
       h_temp.put(temp);
       h_counter = h_max_counter;
     }
-  } else {                                      // When the IRON disconnected, the temperature readings become too high
-    h_temp.init();
-    h_counter = h_max_counter;
   }
 
   if (on) {
@@ -1178,27 +1185,34 @@ bool IRON::fixPower(byte Power) {
   return true;
 }
 
+int IRON::empAverage(int v) {
+  long nv = v *emp_k;
+  int round_v = emp_k >> 1;
+  emp_current += (nv - emp_current + round_v) / emp_k;
+  int r = (emp_current + round_v) / emp_k;
+  return r;
+}
+
 //------------------------------------------ class SCREEN ------------------------------------------------------
-typedef enum s_mode { S_STANDBY, S_WORK, S_POWER, S_CONFIG, S_ERROR} sMode;
 class SCREEN {
   public:
     SCREEN* next;                               // Pointer to the next screen
     SCREEN* nextL;                              // Pointer to the next Level screen, usually, setup
     SCREEN* main;                               // Pointer to the main screen
+    SCREEN* no_iron;                            // Pointer to the scren when the IRON was disconnected
     SCREEN() {
-      next = nextL = main = 0;
+      next = nextL = main = no_iron = 0;
       update_screen  = 0;
       scr_timeout    = 0;
       time_to_return = 0;
     }
     virtual void init(void)                     { }
-    virtual void show(void)                     { }
+    virtual SCREEN* show(void)                  { return this; }
     virtual SCREEN* menu(void)                  { if (this->next != 0)  return this->next;  else return this; }
     virtual SCREEN* menu_long(void)             { if (this->nextL != 0) return this->nextL; else return this; }
     virtual void rotaryValue(int16_t value)     { }
     bool    isSetup(void)                       { return (scr_timeout != 0); }
     void    forceRedraw(void)                   { update_screen = 0; }
-    sMode   screenMode(void)                    { return smode; }
     virtual SCREEN* returnToMain(void) {
       if (main && scr_timeout && (millis() >= time_to_return)) {
         scr_timeout = 0;
@@ -1219,7 +1233,6 @@ class SCREEN {
       return((scr_timeout - to) < 15);
     }
   protected:
-    sMode   smode;                              // The screen mode
     uint32_t update_screen;                     // Time in ms when the sreen should be updated
     uint32_t scr_timeout;                       // Timeout is sec. to return to the main screen, canceling all changes
     uint32_t time_to_return;                    // Time in ms to return to main screen
@@ -1234,11 +1247,10 @@ class mainSCREEN : public SCREEN {
       pEnc  = ENC;
       pBz   = Buzz;
       pCfg  = Cfg;
-      smode = S_STANDBY;
     }
-    virtual void init(void);
-    virtual void show(void);
-    virtual void rotaryValue(int16_t value);    // Setup the preset temperature
+    virtual void    init(void);
+    virtual SCREEN* show(void);
+    virtual void    rotaryValue(int16_t value); // Setup the preset temperature
   private:
     IRON*     pIron;                            // Pointer to the IRON instance
     DSPL*     pD;                               // Pointer to the DSPLay instance
@@ -1287,8 +1299,12 @@ void mainSCREEN::rotaryValue(int16_t value) {
   show_tip = false;
 }
 
-void mainSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* mainSCREEN::show(void) {
+  SCREEN* nxt = this;
+  if (no_iron && pIron->checkIron()) {          // Check that the IRON is connected
+    nxt = no_iron;
+  }
+  if (millis() < update_screen) return nxt;
   update_screen = millis() + period;
 
   if (clear_used_ms && (millis() > clear_used_ms)) {
@@ -1326,6 +1342,7 @@ void mainSCREEN::show(void) {
   } else {
     pD->tCurr(tempH);
   }
+  return nxt;
 }
 
 //---------------------------------------- class tipSCREEN [tip is disconnected, choose new tip] ---------------
@@ -1336,11 +1353,10 @@ class tipSCREEN : public SCREEN {
       pD    = DSP;
       pEnc  = ENC;
       pCfg  = Cfg;
-      smode = S_STANDBY;
     }
-    virtual void init(void);
-    virtual void show(void);
-    virtual void rotaryValue(int16_t value);    // Select the tip
+    virtual void    init(void);
+    virtual SCREEN* show(void);
+    virtual void    rotaryValue(int16_t value); // Select the tip
   private:
     IRON*     pIron;                            // Pointer to the IRON instance
     DSPL*     pD;                               // Pointer to the DSPLay instance
@@ -1369,12 +1385,18 @@ void tipSCREEN::rotaryValue(int16_t value) {
   pIron->setTemp(temp);                         // Install previously set temperature into the IRON by new tip calibration
 }
 
-void tipSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* tipSCREEN::show(void) {
+  SCREEN* nxt = this;
+  if (no_iron && !pIron->checkIron()) {         // Check that the IRON is disconnected
+    nxt = no_iron;
+    pIron->initTempHistory();                   // The new tip is connected, reset the temp history 
+  }
+  if (millis() < update_screen) return nxt;
   update_screen = millis() + period;
 
   pD->tip(pCfg->getCurrentTip(), false);
   pD->calibrated(pCfg->isCalibrated());
+  return nxt;
 }
 
 //---------------------------------------- class workSCREEN [the soldering IRON is ON] -------------------------
@@ -1387,10 +1409,9 @@ class workSCREEN : public SCREEN {
       pBz   = Buzz;
       pEnc  = Enc;
       pCfg  = Cfg;
-      smode = S_WORK;
     }
     virtual void    init(void);
-    virtual void    show(void);
+    virtual SCREEN* show(void);
     virtual void    rotaryValue(int16_t value); // Change the preset temperature
     virtual SCREEN* returnToMain(void);         // Automatic power-off
   private:
@@ -1437,8 +1458,12 @@ void workSCREEN::rotaryValue(int16_t value) {   // Setup new preset temperature 
   update_screen = millis() + period;
 }
 
-void workSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* workSCREEN::show(void) {
+  SCREEN* nxt = this;
+  if (no_iron && pIron->checkIron()) {          // Check that the IRON is connected
+    nxt = no_iron;
+  }
+  if (millis() < update_screen) return nxt;
   update_screen = millis() + period;
 
   int temp      = pIron->tempAverage();
@@ -1464,14 +1489,14 @@ void workSCREEN::show(void) {
     }
   }
 
-  if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 3) && (ap > 0))  {
+  if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 5) && (ap > 0))  {
     if (!ready) {
       idle_power.put(ap);
       pBz->shortBeep();
       ready = true;
       pD->msgReady();
       update_screen = millis() + (period << 2);
-      return;
+      return this;
     }
   }
   
@@ -1491,7 +1516,7 @@ void workSCREEN::show(void) {
   } else {
     pD->msgOn();
   }
-
+  return nxt;
 }
 
 SCREEN* workSCREEN::returnToMain(void) {
@@ -1512,11 +1537,10 @@ class powerSCREEN : public SCREEN {
       pEnc  = Enc;
       pCfg  = CFG;
       on    = false;
-      smode = S_POWER;
     }
-    virtual void init(void);
-    virtual void show(void);
-    virtual void rotaryValue(int16_t value);
+    virtual void    init(void);
+    virtual SCREEN* show(void);
+    virtual void    rotaryValue(int16_t value);
     virtual SCREEN* menu(void);
     virtual SCREEN* menu_long(void);
   private:
@@ -1540,12 +1564,17 @@ void powerSCREEN::init(void) {
   pD->pSet(p);
 }
 
-void powerSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* powerSCREEN::show(void) {
+  SCREEN* nxt = this;
+  if (no_iron && pIron->checkIron()) {          // Check that the IRON is connected
+    nxt = no_iron;
+  }
+  if (millis() < update_screen) return nxt;
   update_screen = millis() + period;
   uint16_t temp = pIron->tempAverage();
   temp = pCfg->tempHuman(temp);
   pD->tCurr(temp);
+  return nxt;
 }
 
 void powerSCREEN::rotaryValue(int16_t value) {
@@ -1583,14 +1612,15 @@ SCREEN* powerSCREEN::menu_long(void) {
 //---------------------------------------- class errorSCREEN [the soldering IRON error detected] ---------------
 class errorSCREEN : public SCREEN {
   public:
-    errorSCREEN(DSPL* DSP, BUZZER* Buzz) {
+    errorSCREEN(IRON* Iron, DSPL* DSP, BUZZER* Buzz) {
+      pIron = Iron;
       pD    = DSP;
       pBz   = Buzz;
-      smode = S_ERROR;
     }
-    virtual void init(void) { pD->clear(); pD->msgFail(); pBz->failedBeep(); }
+    virtual void init(void) { pIron->switchPower(false); pD->clear(); pD->msgFail(); pBz->failedBeep(); }
   private:
-    DSPL* pD;                                   // Pointer to the display instance
+    IRON*    pIron;                             // Pointer to the IRON instance
+    DSPL*    pD;                                // Pointer to the display instance
     BUZZER*  pBz;                               // Pointer to the simple Buzzer instance
 };
 
@@ -1602,11 +1632,10 @@ class configSCREEN : public SCREEN {
       pD    = DSP;
       pEnc  = Enc;
       pCfg  = Cfg;
-      smode = S_CONFIG;
     }
-    virtual void init(void);
-    virtual void show(void);
-    virtual void rotaryValue(int16_t value);
+    virtual void    init(void);
+    virtual SCREEN* show(void);
+    virtual void    rotaryValue(int16_t value);
     virtual SCREEN* menu(void);
     virtual SCREEN* menu_long(void);
     SCREEN* calib;                              // Pointer to the calibration SCREEN
@@ -1635,8 +1664,8 @@ void configSCREEN::init(void) {
   this->setSCRtimeout(30);
 }
 
-void configSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* configSCREEN::show(void) {
+  if (millis() < update_screen) return this;
   update_screen = millis() + period;
   switch (mode) {
     case 0:
@@ -1665,6 +1694,7 @@ void configSCREEN::show(void) {
     default:
       break;
   }
+  return this;
 }
 
 void configSCREEN::rotaryValue(int16_t value) {
@@ -1738,11 +1768,10 @@ class calibSCREEN : public SCREEN {
       pEnc  = Enc;
       pCfg  = Cfg;
       pBz   = Buzz;
-      smode = S_CONFIG;
     }
-    virtual void init(void);
-    virtual void show(void);
-    virtual void rotaryValue(int16_t value);
+    virtual void    init(void);
+    virtual SCREEN* show(void);
+    virtual void    rotaryValue(int16_t value);
     virtual SCREEN* menu(void);
     virtual SCREEN* menu_long(void);
   private:
@@ -1760,6 +1789,7 @@ class calibSCREEN : public SCREEN {
     bool      ready;                            // Whether the temperature has been established
     bool      tune;                             // Whether the parameter is modifiying
     bool      show_current;                     // Whether show the current temperature
+    const uint16_t t_diff = 60;                 // The adjustement could be in the interval [t_ref-t_diff; t_ref+2*t_diff]
     const uint32_t period = 1000;               // Update screen period
 };
 
@@ -1783,8 +1813,8 @@ void calibSCREEN::init(void) {
   forceRedraw();
 }
 
-void calibSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* calibSCREEN::show(void) {
+  if (millis() < update_screen) return this;
   update_screen = millis() + period;
   int temp = pIron->tempAverage();
   int temp_set = pIron->getTemp();
@@ -1795,7 +1825,7 @@ void calibSCREEN::show(void) {
   byte p = pIron->appliedPower();
   if (!pIron->isOn()) p = 0;
   pD->percent(p);
-  if (tune && (abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 6))  {
+  if (tune && (abs(temp_set - temp) < 4) && (pIron->tempDispersion() <= 20))  {
     if (!ready) {
       pBz->shortBeep();
       pD->msgReady();
@@ -1807,6 +1837,7 @@ void calibSCREEN::show(void) {
     tune  = false;
     ready = false;
   }
+  return this;
 }
 
 void calibSCREEN::rotaryValue(int16_t value) {
@@ -1840,8 +1871,8 @@ SCREEN* calibSCREEN::menu(void) {
   } else {
     tune = true;
     uint16_t temp = selectTemp();
-    uint16_t minT = 100;                        // Minimum input temperature (Celsius)
-    uint16_t maxT = 550;                        // Maximum input temperature (Celsius)
+    uint16_t minT = temp_tip[mode] - t_diff;    // Minimum input temperature (Celsius)
+    uint16_t maxT = temp_tip[mode] + 2*t_diff;  // Maximum input temperature (Celsius)
     if (!cels) {
       minT = map(minT, temp_minC, temp_maxC, temp_minF, temp_maxF);
       maxT = map(maxT, temp_minC, temp_maxC, temp_minF, temp_maxF);
@@ -1914,13 +1945,12 @@ class tuneSCREEN : public SCREEN {
       pD    = DSP;
       pEnc  = ENC;
       pBz   = Buzz;
-      smode = S_CONFIG;
     }
-    virtual void init(void);
+    virtual void    init(void);
     virtual SCREEN* menu(void);
     virtual SCREEN* menu_long(void);
-    virtual void show(void);
-    virtual void rotaryValue(int16_t value);
+    virtual SCREEN* show(void);
+    virtual void    rotaryValue(int16_t value);
   private:
     IRON*    pIron;                             // Pointer to the IRON instance
     DSPL*    pD;                                // Pointer to the display instance
@@ -1934,7 +1964,7 @@ class tuneSCREEN : public SCREEN {
 void tuneSCREEN::init(void) {
   pIron->switchPower(false);
   max_power = pIron->getMaxFixedPower();
-  pEnc->reset(75, 0, max_power, 1, 5);          // Rotate the encoder to change the power supplied
+  pEnc->reset(15, 0, max_power, 1, 5);          // Rotate the encoder to change the power supplied
   arm_beep = false;
   pD->clear();
   pD->msgTune();
@@ -1946,8 +1976,8 @@ void tuneSCREEN::rotaryValue(int16_t value) {
   forceRedraw();
 }
 
-void tuneSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* tuneSCREEN::show(void) {
+  if (millis() < update_screen) return this;
   update_screen = millis() + period;
   int16_t temp = pIron->tempAverage();
   pD->tCurr(temp);
@@ -1961,6 +1991,7 @@ void tuneSCREEN::show(void) {
     pBz->shortBeep();
     arm_beep = false;
   }
+  return this;
 }
   
 SCREEN* tuneSCREEN::menu(void) {                // The rotary button pressed
@@ -1985,13 +2016,12 @@ class pidSCREEN : public SCREEN {
     pidSCREEN(IRON* Iron, ENCODER* ENC) {
       pIron = Iron;
       pEnc  = ENC;
-      smode = S_CONFIG;
     }
-    virtual void init(void);
+    virtual void    init(void);
     virtual SCREEN* menu(void);
     virtual SCREEN* menu_long(void);
-    virtual void show(void);
-    virtual void rotaryValue(int16_t value);
+    virtual SCREEN* show(void);
+    virtual void    rotaryValue(int16_t value);
   private:
     void     showCfgInfo(void);                 // show the main config information: Temp set and PID coefficients
     IRON*    pIron;                             // Pointer to the IRON instance
@@ -2053,8 +2083,8 @@ void pidSCREEN::rotaryValue(int16_t value) {
   }
 }
 
-void pidSCREEN::show(void) {
-  if (millis() < update_screen) return;
+SCREEN* pidSCREEN::show(void) {
+  if (millis() < update_screen) return this;
   update_screen = millis() + period;
   if (pIron->isOn()) {
     char buff[60];
@@ -2066,6 +2096,7 @@ void pidSCREEN::show(void) {
     Serial.println(buff);
     //if ((temp_set - temp) > 30) Serial.println("");
   }
+  return this;
 }
 
 SCREEN* pidSCREEN::menu(void) {                 // The rotary button pressed
@@ -2116,7 +2147,7 @@ BUZZER     simpleBuzzer(buzzerPIN);
 mainSCREEN   offScr(&iron, &disp, &rotEncoder, &simpleBuzzer, &ironCfg);
 tipSCREEN    selScr(&iron, &disp, &rotEncoder, &ironCfg);
 workSCREEN   wrkScr(&iron, &disp, &rotEncoder, &simpleBuzzer, &ironCfg);
-errorSCREEN  errScr(&disp, &simpleBuzzer);
+errorSCREEN  errScr(&iron, &disp, &simpleBuzzer);
 powerSCREEN  pwrScr(&iron, &disp, &rotEncoder, &ironCfg);
 configSCREEN cfgScr(&iron, &disp, &rotEncoder, &ironCfg);
 calibSCREEN  tipScr(&iron, &disp, &rotEncoder, &ironCfg, &simpleBuzzer);
@@ -2174,12 +2205,15 @@ void setup() {
   // Initialize SCREEN hierarchy
   offScr.next    = &wrkScr;
   offScr.nextL   = &cfgScr;
+  offScr.no_iron = &selScr;
   wrkScr.next    = &offScr;
   wrkScr.nextL   = &pwrScr;
   wrkScr.main    = &offScr;
+  wrkScr.no_iron = &errScr;
   errScr.next    = &offScr;
   errScr.nextL   = &offScr;
   pwrScr.nextL   = &wrkScr;
+  pwrScr.no_iron = &errScr;
   cfgScr.next    = &tuneScr;
   cfgScr.nextL   = &offScr;
   cfgScr.main    = &offScr;
@@ -2188,6 +2222,7 @@ void setup() {
   tuneScr.next   = &cfgScr;
   tuneScr.main   = &offScr;
   selScr.nextL   = &tuneScr;
+  selScr.no_iron = &offScr;
   pCurrentScreen->init();
 }
 
@@ -2202,28 +2237,7 @@ void rotPushChange(void) {
 // The main loop
 void loop() {
   static int16_t  old_pos = rotEncoder.read();
-  static uint32_t check_replace = 0;            // The time in ms when to check tip for replacement
   
-  bool no_iron = iron.checkIron();              // Periodically check that the IRON works correctrly
-  // the soldering iron failed
-  if (!iron.isOn() && (pCurrentScreen->screenMode() == S_WORK)) {
-    iron.switchPower(false);
-    pCurrentScreen = &errScr;
-    pCurrentScreen->init();
-  }
-
-  if ((pCurrentScreen->screenMode() == S_STANDBY) && (millis () >= check_replace)) {
-    check_replace = millis() + 1000;
-    SCREEN *nxt = &offScr;
-    if (no_iron) {
-      nxt = &selScr;
-    }
-    if (pCurrentScreen != nxt) {
-      pCurrentScreen = nxt;
-      pCurrentScreen->init();
-    }
-  }
-
   SCREEN* nxt = pCurrentScreen->returnToMain();
   if (nxt != pCurrentScreen) {                  // return to the main screen by timeout
     pCurrentScreen = nxt;
@@ -2265,7 +2279,11 @@ void loop() {
       break;
   }
 
-  pCurrentScreen->show();
+  nxt = pCurrentScreen->show();
+  if (nxt && pCurrentScreen != nxt) {           // Be paranoic, the returned value must not be null 
+    pCurrentScreen = nxt;
+    pCurrentScreen->init();
+  }
 }
 
 
