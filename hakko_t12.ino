@@ -29,18 +29,20 @@ const byte R_BUTN_PIN = 3;                      // Rotary Encoder push button pi
 const byte probePIN  = A0;                      // Thermometer pin from soldering IRON
 const byte checkPIN  = A1;                      // Iron current check pin
 const byte buzzerPIN = 11;                      // The simple buzzer to make a noise
+const byte heaterBIT = 0b00000100;              // The Heater pin, D10, is 2-nd bit on the PORTB register
 
 const uint16_t temp_minC = 180;                 // Minimum calibration temperature in degrees of Celsius
 const uint16_t temp_maxC = 450;                 // Maximum calibration temperature in degrees of Celsius
+const uint16_t temp_max  = 950;                 // Maximum possible temparature in internal units
 const uint16_t temp_minF = (temp_minC *9 + 32*5 + 2)/5;
 const uint16_t temp_maxF = (temp_maxC *9 + 32*5 + 2)/5;
 const uint16_t temp_tip[3] = {200, 300, 400};   // Reference temperatures for tip calibration (Celsius)
 const uint16_t ambient_tempC = 25;              // Ambient temperature in Celsius
 
-#define max_tips 5                              // The maximum supported tip number. Maximum value is 253
-const char *tip_name[max_tips] = {"BC2", "D24", "DL32", "DL52", "KR"};
-//#define max_tips 13                              // The maximum supported tip number. Maximum value is 253
-//const char *tip_name[max_tips] = {"BC1", "BC2", "BC3", "BL", "C2", "C3", "D12", "D24", "DL32", "DL52", "IL", "KR", "JL02"};
+//#define max_tips 5                              // The maximum supported tip number. Maximum value is 253
+//const char *tip_name[max_tips] = {"BC2", "D24", "DL32", "DL52", "KR"};
+#define max_tips 13                              // The maximum supported tip number. Maximum value is 253
+const char *tip_name[max_tips] = {"BC1", "BC2", "BC3", "BL", "C2", "C3", "D12", "D24", "DL32", "DL52", "IL", "KR", "JL02"};
 
 // The variables for Timer1 operations
 volatile uint16_t  tmr1_count;                  // The count to calculate the temperature and the curent check periods
@@ -229,6 +231,7 @@ class IRON_CFG : public CONFIG {
     bool     getTempUnits(void)                 { return Config.celsius; }
     bool     savePresetTempHuman(uint16_t temp);// Save preset temperature in the human readable units
     bool     savePresetTemp(uint16_t temp);     // Save preset temperature in the internal units (convert it to the human readable units)
+	  void     applyCalibration(uint16_t tip[3]); // Apply calibration data, used during calibration procedure
     void     saveConfig(byte off, bool cels);   // Save global configuration parameters
     void     getCalibrationData(uint16_t tip[3]);
     void     saveCalibrationData(uint16_t tip[3]);
@@ -245,7 +248,6 @@ class IRON_CFG : public CONFIG {
     const uint16_t def_tip[3] = {279, 501, 700};// Default values of internal sensor readings at reference temperatures
     const uint16_t def_set = 240;               // Default preset temperature in degrees of Celsius
     const uint16_t ambient_tempF = (ambient_tempC *9 + 32*5 + 2)/5;
-    const uint16_t max_temp = 850;                  // Maximum possible temparature in internal units
 };
 
 void IRON_CFG::init(void) {
@@ -266,7 +268,7 @@ uint16_t IRON_CFG::tempPreset(void) {
 uint16_t IRON_CFG::human2temp(uint16_t t) {     // Translate the human readable temperature into internal value
   uint16_t temp = t;
   if (!Config.celsius)
-    temp = map(temp, temp_minF, temp_maxF, temp_minC, temp_maxC);
+    t = map(t, temp_minF, temp_maxF, temp_minC, temp_maxC);
   if (t < temp_minC) t = temp_minC;
   if (t > temp_maxC) t = temp_maxC;
   if (t >= temp_tip[1])
@@ -332,6 +334,11 @@ bool IRON_CFG::savePresetTemp(uint16_t temp) {
   return savePresetTempHuman(tempH);
 }
 
+void IRON_CFG::applyCalibration(uint16_t tip[3]) {
+  for (byte i = 0; i < 3; ++i)
+    t_tip[i] = tip[i];
+}
+
 void IRON_CFG::saveConfig(byte off, bool cels) {
   if (off > 30) off = 0;
   Config.off_timeout = off;
@@ -354,7 +361,7 @@ void IRON_CFG::getCalibrationData(uint16_t tip[3]) {
 }
 
 void IRON_CFG::saveCalibrationData(uint16_t tip[3]) {
-  if (tip[3] > max_temp) tip[3] = max_temp;
+  if (tip[3] > temp_max) tip[3] = temp_max;
   uint32_t cd = tip[2] & 0x3FF; cd <<= 10;       // Pack tip calibration data in one 32-bit word: 10-bits per value
   cd |= tip[1] & 0x3FF; cd <<= 10;
   cd |= tip[0];
@@ -373,7 +380,7 @@ bool IRON_CFG::loadTipData(uint16_t tip[3], byte index) {
 }
 
 bool IRON_CFG::validateTip(uint16_t tip[3]) {
-  bool valid = ((tip[0] < tip[1]) && (tip[1] < tip[2]) && (tip[2] <= max_temp));
+  bool valid = ((tip[0] < tip[1]) && (tip[1] < tip[2]) && (tip[2] <= temp_max));
   uint16_t delta = temp_tip[1] - temp_tip[0];
   delta <<= 1; delta /= 3;                      // 2/3 delta
   if ((tip[0] + delta) > tip[1]) valid = false;
@@ -403,7 +410,7 @@ void IRON_CFG::buildCalibration(void) {
     for (byte i = 0; i <  3; ++i)
       t_tip[i] = def_tip[i];
   }
-  if (t_tip[2] > max_temp) t_tip[2] = max_temp;
+  if (t_tip[2] > temp_max) t_tip[2] = temp_max;
 }
 
 void IRON_CFG::setDefaults(bool Write) {
@@ -811,7 +818,6 @@ class HISTORY {
     void     put(uint16_t item);                // Put new entry to the history
     uint16_t average(void);                     // calcilate the average value
     float    dispersion(void);                  // calculate the math dispersion
-    float    gradient(void);                    // calculate the gradient of the history values
   private:
     volatile uint16_t queue[H_LENGTH];
     volatile byte len;                          // The number of elements in the queue
@@ -857,23 +863,6 @@ float HISTORY::dispersion(void) {
   sum += len << 1;
   float d = (float)sum / (float)len;
   return d;
-}
-
-// approfimating the history with the line (y = ax+b) using method of minimum square. Gradient is parameter a
-float HISTORY::gradient(void) {
-  if (len < 2) return 0;
-  long sx, sx_sq, sxy, sy;
-  sx = sx_sq = sxy = sy = 0;
-  for (byte i = 1; i <= len; ++i) {
-    sx    += i;
-    sx_sq += i*i;
-    sxy   += i*queue[i-1];
-    sy    += queue[i-1];
-  }
-  long numerator   = len * sxy - sx * sy;
-  long denominator = len * sx_sq - sx * sx;
-  float a = (float)numerator / (float)denominator;
-  return a;
 }
 
 //------------------------------------------ class PID algoritm to keep the temperature -----------------------
@@ -970,13 +959,14 @@ class FastPWM {
     FastPWM()                                   { }
     void init(void);
     void duty(byte d)                           { OCR1B = d; }
+    void off(void)                              { OCR1B = 0; PORTB &= ~heaterBIT; }
 };
 
 void FastPWM::init(void) {
   pinMode(10, OUTPUT);                          // Use D10 pin for heationg the IRON
-  digitalWrite(10, LOW);                        // Switch-off the power
+  PORTB &= ~heaterBIT;                          // Switch-off the power
   tmr1_count = 0;
-  iron_off = false;
+  iron_off = false;                             // The volatile global variable
   noInterrupts();
   TCNT1   = 0;
   TCCR1B  = _BV(WGM13);                         // Set mode as phase and frequency correct pwm, stop the timer
@@ -1035,11 +1025,9 @@ class IRON : protected PID {
     const byte     max_power       = 210;       // maximum power to the IRON
     const byte     max_fixed_power = 120;       // Maximum power in fiexed power mode
     const uint16_t min_curr        = 10;        // The minimum current value to check the IRON is connected
-    const uint16_t no_iron_temp    = 1000;      // The temperature readings when the IRON is disconnected
     const uint32_t check_period    = 503;       // Check the iron period in ms
     const uint16_t h_max_counter   = 500 / temp_check_period;     // Put the history data twice a second
-    
-    const byte     emp_k = 5;                   // The exponential average coefficient
+    const byte     emp_k = 2;                   // The exponential average coefficient
 };
 
 void IRON::setTemp(uint16_t t) {
@@ -1078,7 +1066,7 @@ void IRON::init(void) {
 void IRON::switchPower(bool On) {
   on = On;
   if (!on) {
-    fastPWM.duty(0);
+    fastPWM.off();
     fix_power = false;
     actual_power = 0;
     return;
@@ -1101,7 +1089,7 @@ bool IRON::checkIron(void) {
       uint16_t c = analogRead(cPIN);            // Check the current through the IRON
       if (c > curr) curr = c;                   // The maximum value
     }
-    fastPWM.duty(0);
+    fastPWM.off();
     if (curr > min_curr * 2)                    // Do not put big values in to the history 
       curr = min_curr * 2;                      // This is enough to ensure the IRON is connected
     curr = empAverage(curr);                    // Calculate exponential average value of the current
@@ -1111,7 +1099,7 @@ bool IRON::checkIron(void) {
   disconnected = (curr < min_curr);
 
   if (!on && !fix_power) {                      // If the soldering IRON is set to be switched off
-    fastPWM.duty(0);                            // Surely power off the IRON
+    fastPWM.off();                              // Surely power off the IRON
   }
 
   if (on && disconnected) {                     // switch off the power if the IRON disconnected
@@ -1126,11 +1114,13 @@ void IRON::keepTemp(void) {
   if (actual_power > 0)                         // Restore the power applied to the IRON
     fastPWM.duty(actual_power);
 
-  if (temp < no_iron_temp) {                    // Do not save to the history readings when the IRON is disconnected
+  if (temp < temp_max) {                        // Do not save to the history readings when the IRON is disconnected
     if (--h_counter < 0) {
       h_temp.put(temp);
       h_counter = h_max_counter;
-    }
+    } 
+  } else {
+      if (on) chill = true;
   }
 
   if (on) {
@@ -1141,7 +1131,7 @@ void IRON::keepTemp(void) {
       } else {
         power = 0;
         actual_power = 0;
-        fastPWM.duty(actual_power);
+        fastPWM.off();
         return;
       }
     }
@@ -1162,7 +1152,7 @@ bool IRON::fixPower(byte Power) {
   if (Power == 0) {                             // To switch off the IRON, set the Power to 0
     fix_power = false;
     actual_power = 0;
-    fastPWM.duty(0);
+    fastPWM.off();
     return true;
   }
 
@@ -1186,11 +1176,9 @@ bool IRON::fixPower(byte Power) {
 }
 
 int IRON::empAverage(int v) {
-  long nv = v *emp_k;
-  int round_v = emp_k >> 1;
-  emp_current += (nv - emp_current + round_v) / emp_k;
-  int r = (emp_current + round_v) / emp_k;
-  return r;
+  long round_v = long(emp_k) >> 1;
+  emp_current += (long(v) - emp_current + round_v) / emp_k;
+  return emp_current;
 }
 
 //------------------------------------------ class SCREEN ------------------------------------------------------
@@ -1776,14 +1764,14 @@ class calibSCREEN : public SCREEN {
     virtual SCREEN* menu_long(void);
   private:
     uint16_t  selectTemp(void);                 // Calculate the value of the temperature limit depending on mode
+	  void      buildCalibration(uint16_t tip[3]);
     IRON*     pIron;                            // Pointer to the IRON instance
     DSPL*     pD;                               // Pointer to the DSPLay instance
     ENCODER*  pEnc;                             // Pointer to the rotary encoder instance
     IRON_CFG* pCfg;                             // Pointer to the config instance
     BUZZER*   pBz;                              // Pointer to the buzzer instance
     byte      mode;                             // Which parameter to change: t_min, t_mid, t_max
-    uint16_t  real_temp[3];                     // Real temperature measured at each of calibration points
-    uint16_t  intl_temp[3];                     // Temperature in the internal units measured at each of calibration points
+	  uint16_t  calib_temp[2][4];                 // The calibration data: real temp. [0] and temp. in internal units [1]
     uint16_t  preset_temp;                      // The preset temp in human readable units
     bool      cels;                             // Current celsius/farenheit;
     bool      ready;                            // Whether the temperature has been established
@@ -1800,9 +1788,11 @@ void calibSCREEN::init(void) {
   tune  = false;
   ready = false;
   show_current = true;
-  for (byte i = 0; i < 3; ++i)                  // Initialize all reference temperature points
-    real_temp[i] = temp_tip[i];                 // temp_tip is global array
-  pCfg->getCalibrationData(intl_temp);
+  for (byte i = 1; i < 4; ++i)                  // Initialize all reference temperature points
+    calib_temp[0][i] = temp_tip[i-1];           // temp_tip is global array
+  calib_temp[0][0] = ambient_tempC;
+  calib_temp[0][4] = temp_maxC;
+  pCfg->getCalibrationData(&calib_temp[1][1]);
   cels = pCfg->getTempUnits();
   pD->clear();
   pD->msgOff();
@@ -1858,14 +1848,17 @@ SCREEN* calibSCREEN::menu(void) {
   if (tune) {                                   // Calibrated value for the temperature limit just has been setup
     tune = false;
     uint16_t r_temp = pEnc->read();             // Real temperature
-    uint16_t temp   = pIron->tempAverage();     // The temperature of the IRON
+    uint16_t temp   = pIron->tempAverage();     // The temperature of the IRON in internal units
     pIron->switchPower(false);
     pD->msgOff();
     if (ready) {
       if (!cels)                                // Always save the human readable temperature in Celsius
         r_temp = map(r_temp, temp_minF, temp_maxF, temp_minC, temp_maxC);
-      real_temp[mode] = r_temp;
-      intl_temp[mode] = temp;
+      calib_temp[0][mode+1] = r_temp;
+      calib_temp[1][mode+1] = temp;
+	  uint16_t tip[3];
+	  buildCalibration(tip);
+	  pCfg->applyCalibration(tip);
     }
     pEnc->reset(mode, 0, 2, 1, 0, true);        // The temperature limit has been adjusted, switch to select mode
   } else {
@@ -1891,38 +1884,10 @@ SCREEN* calibSCREEN::menu(void) {
 
 SCREEN* calibSCREEN::menu_long(void) {           // Save new tip calibration data
   pIron->switchPower(false);
-  // temp_tip is global array of calibration temperatures in Celsius
-  uint16_t delta = temp_tip[1] - temp_tip[0]; delta >>= 1;
-  uint16_t ambient = ambient_tempC;
-  if (!cels) ambient = map(ambient, temp_minC, temp_maxC, temp_minF, temp_maxF);
 
-  // Calculate the internal calibration temperature at the middle point as average value of two approximations:
-  // before the middle point and after it.
-  uint16_t t_intl[3];
-  if ((real_temp[1] > real_temp[0]) && ((real_temp[0] + delta) < real_temp[1]))
-    t_intl[1] = map(temp_tip[1], real_temp[0], real_temp[1], intl_temp[0], intl_temp[1]);
-  else
-    t_intl[1] = map(temp_tip[1], ambient, real_temp[1], 0, intl_temp[1]);
-  t_intl[1] += map(temp_tip[1], real_temp[0], real_temp[2], intl_temp[0], intl_temp[2]) + 1;
-  t_intl[1] >>= 1;                                   // half of the summ, average value
-
-  if ((real_temp[1] > real_temp[0]) && ((real_temp[0] + delta) < real_temp[1]))
-    t_intl[0] = map(temp_tip[0], real_temp[0], temp_tip[1], intl_temp[0], t_intl[1]);
-  else
-    t_intl[0] = map(temp_tip[0], ambient, temp_tip[1], 0, t_intl[1]);
-
-  if ((real_temp[2] > real_temp[1]) && ((real_temp[1] + delta) < real_temp[2]))
-    t_intl[2] = map(temp_tip[2], temp_tip[1], real_temp[2], t_intl[1], intl_temp[2]);
-  else
-    t_intl[2] = map(temp_tip[2], temp_tip[0], real_temp[2], t_intl[1], intl_temp[2]);
-
-  if (((t_intl[0] + delta) > t_intl[1]) || ((t_intl[1] + delta) > t_intl[2])) {
-    t_intl[0] = map(temp_tip[0], real_temp[0], real_temp[2], intl_temp[0], intl_temp[2]);
-    t_intl[1] = map(temp_tip[1], real_temp[0], real_temp[2], intl_temp[0], intl_temp[2]);
-    t_intl[2] = map(temp_tip[2], real_temp[0], real_temp[2], intl_temp[0], intl_temp[2]);
-  }
-  
-  pCfg->saveCalibrationData(t_intl);
+  uint16_t tip[3];
+  buildCalibration(tip);
+  pCfg->saveCalibrationData(tip);
   pCfg->savePresetTempHuman(preset_temp);
   uint16_t temp = pCfg->human2temp(preset_temp);
   pIron->setTemp(temp);
@@ -1935,6 +1900,19 @@ uint16_t calibSCREEN::selectTemp(void) {
   if (!cels)                                    // Translate the temperature into the Farenheits
     temp_calib = map(temp_calib, temp_minC, temp_maxC, temp_minF, temp_maxF);
   return temp_calib;
+}
+
+void calibSCREEN::buildCalibration(uint16_t tip[3]) {
+  // temp_tip is global array of calibration temperatures in Celsius
+  for (byte i = 1; i < 3; ++i) {
+	  tip[i-1]  = map(temp_tip[i-1], calib_temp[0][i-1], calib_temp[0][i], calib_temp[1][i-1], calib_temp[1][i]);
+	  tip[i-1] += map(temp_tip[i-1], calib_temp[0][i], calib_temp[0][i+1], calib_temp[1][i], calib_temp[1][i+1]);
+	  tip[i-1] >>= 1;
+  }
+  tip[2]  = map(temp_tip[2], calib_temp[0][2], calib_temp[0][3], calib_temp[1][2], calib_temp[1][3]);
+  tip[2] += map(temp_tip[2], calib_temp[0][1], calib_temp[0][3], calib_temp[1][1], calib_temp[1][3]);
+  tip[2] >>= 1;
+  if (tip[2] > temp_max) tip[2] = temp_max;
 }
 
 //---------------------------------------- class tuneSCREEN [tune the potentiometer ] --------------------------
@@ -2165,7 +2143,7 @@ SCREEN *pCurrentScreen = &offScr;
  */
 const uint32_t period_ticks = (31250 * temp_check_period)/1000-33-5;
 ISR(TIMER1_OVF_vect) {
-  if (iron_off) {                                     // The IRON is switched off, we need to chack the temperature
+  if (iron_off) {                                     // The IRON is switched off, we need to check the temperature
     if (++tmr1_count >= 33) {                         // about 1 millisecond
       TIMSK1 &= ~_BV(TOIE1);                          // disable the overflow interrupts
       iron.keepTemp();                                // Check the temp. If on, keep the temperature
@@ -2178,6 +2156,7 @@ ISR(TIMER1_OVF_vect) {
       TIMSK1 &= ~_BV(TOIE1);                          // disable the overflow interrupts
       tmr1_count = 0;
       OCR1B      = 0;                                 // Switch-off the power to check the temperature
+      PORTB     &= ~heaterBIT;
       iron_off   = true;
       TIMSK1    |= _BV(TOIE1);                        // enable the overflow interrupts
     }
