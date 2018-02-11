@@ -1791,7 +1791,6 @@ void calibSCREEN::init(void) {
   for (byte i = 1; i < 4; ++i)                  // Initialize all reference temperature points
     calib_temp[0][i] = temp_tip[i-1];           // temp_tip is global array
   calib_temp[0][0] = ambient_tempC;
-  calib_temp[0][4] = temp_maxC;
   pCfg->getCalibrationData(&calib_temp[1][1]);
   cels = pCfg->getTempUnits();
   pD->clear();
