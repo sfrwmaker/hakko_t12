@@ -1,5 +1,7 @@
 Soldering IRON controller fot hakko t12 tips based on atmega328p-pu muicrocontroller (Arduino UNO/NANO)
 
+Updated 04/18/2019. Two display configuration support added. You should select appropriate display in the config.h file
+
 Updated 01/14/2018. Fixed bug with the IRON overheat. New procedure in the tip configutration implemented. 
 
 Updated 11/23/2017. Fixed bug with cold temperature detection. New criteria for ready state implemented in the working mode and in the tip configuration mode.
