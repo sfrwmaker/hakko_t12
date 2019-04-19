@@ -2,7 +2,6 @@
 #include "dspl_0802.h"
 
 #ifdef DISPLAY_0802
-#include "tips.h"
 
 void DSPL::init(void) {
   LiquidCrystal::begin(8, 2);

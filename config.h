@@ -19,5 +19,6 @@
  * max_tips value depend on the number of tips you are going to use. See tip_name[] in tips.h
  */
 #define max_tips 13
+extern const char *tip_name[max_tips];
 
 #endif

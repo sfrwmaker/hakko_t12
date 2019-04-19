@@ -2,7 +2,6 @@
 #include "dspl_1602_i2c.h"
 
 #ifdef DISPLAY_1602_I2C
-#include "tips.h"
 
 void DSPL::init(void) {
   LiquidCrystal_I2C::begin();

@@ -38,6 +38,8 @@ volatile uint16_t  tmr1_count;                  // The count to calculate the te
 volatile bool      iron_off;                    // Whether the IRON is switched off to check the temperature
 const uint32_t     temp_check_period = 20;      // The IRON temperature check period, ms
 
+const char *tip_name[max_tips] = {"BC1", "BC2", "BC3", "BL", "C2", "C3", "D12", "D24", "DL32", "DL52", "IL", "KR", "JL02"};
+
 //------------------------------------------ Configuration data ------------------------------------------------
 /* Config record in the EEPROM has the following format:
  * uint32_t ID                           each time increment by 1
