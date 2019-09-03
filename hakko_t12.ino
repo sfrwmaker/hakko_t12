@@ -262,7 +262,10 @@ uint16_t IRON_CFG::human2temp(uint16_t t) {     // Translate the human readable 
     t = map(t, temp_minF, temp_maxF, temp_minC, temp_maxC);
   if (t < temp_minC) t = temp_minC;
   if (t > temp_maxC) t = temp_maxC;
-  if (t >= temp_tip[1])
+
+  if (t < temp_tip[0])
+    temp = map(t+1, ambient_tempC, temp_tip[0], 0, t_tip[0]);
+  else if (t >= temp_tip[1])
     temp = map(t+1, temp_tip[1], temp_tip[2], t_tip[1], t_tip[2]);
   else
     temp = map(t+1, temp_tip[0], temp_tip[1], t_tip[0], t_tip[1]);
