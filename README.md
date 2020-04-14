@@ -5,6 +5,7 @@ Updated 04/14/2020. Major changes include schematics update.
 - Support for optional ambient temperature sensor added.
 - Calibration procedure algotithm updated.
 - New menu items added.
+
 Because the major changes were made, the prevoius stable firmware version has been moved in OLD folder for backup.
 
 Updated 09/05/2019. Preset temperature jumps when finished rotating the encoder issue fixed
