@@ -1,5 +1,7 @@
 Soldering IRON controller fot hakko t12 tips based on atmega328p-pu muicrocontroller (Arduino UNO/NANO)
 
+Updated 04/16/2020. To increase stability, removed suport for ambient temperature sensor.
+
 Updated 04/14/2020. Major changes include schematics update.
 - Support for optional TILT/REED switch added.
 - Support for optional ambient temperature sensor added.
