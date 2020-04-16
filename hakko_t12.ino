@@ -320,11 +320,12 @@ bool IRON::checkIron(void) {
 // This routine is used to keep the IRON temperature near required value and is activated by the Timer1
 void IRON::keepTemp(void) {
     uint16_t t = analogRead(sPIN);              // Read the IRON temperature
+/*
     uint16_t ambient = 512;                     // Update the ambient temperature
     if (!disconnected)
         ambient = analogRead(aPIN);
     amb_int.update(ambient);
-
+*/
     uint16_t t_set = temp_set;                  // The preset temperature depends on usual/low power mode
     if (temp_low) t_set = temp_low;
     
@@ -391,6 +392,7 @@ void IRON::fixPower(uint8_t Power) {
  * Caches previous result to skip expensive calculations
  */
 int16_t IRON::ambientTemp(void) {
+/*
 static const uint16_t add_resistor  = 10030;                // The additional resistor value (10koHm)
 static const float    normal_temp[2]= { 10000, 25 };        // nominal resistance and the nominal temperature
 static const uint16_t beta          = 3950;                 // The beta coefficient of the thermistor (usually 3000-4000)
@@ -419,11 +421,15 @@ static int      cached_ambient      = -200;                 // Previous value of
         cached_ambient  = ambient_tempC;
     }
     return cached_ambient;
+*/
+    return ambient_tempC;
 }
 
 void IRON::adjust(uint16_t t) {
+/*
     if (t > temp_max) t = temp_max;             // Do not allow over heating
     temp_set = t;
+*/
 }
 
 // If any switch is short, its status is 'true'
@@ -826,9 +832,10 @@ SCREEN* workSCREEN::show(void) {
     if (low_temp && ready && pCfg->getOffTimeout()) {       // The IRON has reaches the preset temperature                         
         hwTimeout(low_temp, tilt_active);       // Use hardware tilt switch to turn low power mode
     }
+/*
     if (!lowpower_mode)
         adjustPresetTemp();
-  
+*/  
 	uint32_t to = (time_to_return - millis()) / 1000;
 	if (ready) {
 		if (scr_timeout > 0 && (to < 100)) {
