@@ -319,14 +319,10 @@ bool IRON::checkIron(void) {
 
 // This routine is used to keep the IRON temperature near required value and is activated by the Timer1
 void IRON::keepTemp(void) {
-    uint16_t t = analogRead(sPIN);              // Read the IRON temperature
-/*
-    uint16_t ambient = 512;                     // Update the ambient temperature
-    if (!disconnected)
-        ambient = analogRead(aPIN);
+    uint16_t  ambient = analogRead(aPIN);       // Update ambient temperature
     amb_int.update(ambient);
-*/
-    uint16_t t_set = temp_set;                  // The preset temperature depends on usual/low power mode
+    uint16_t t = analogRead(sPIN);              // Reat the IRON temperature
+    volatile uint16_t t_set = temp_set;         // The preset temperature depends on usual/low power mode
     if (temp_low) t_set = temp_low;
     
     if ((t >= temp_max + 20) || (t > (t_set + 100))) { // Prevent global over heating
@@ -392,14 +388,12 @@ void IRON::fixPower(uint8_t Power) {
  * Caches previous result to skip expensive calculations
  */
 int16_t IRON::ambientTemp(void) {
-/*
 static const uint16_t add_resistor  = 10030;                // The additional resistor value (10koHm)
 static const float    normal_temp[2]= { 10000, 25 };        // nominal resistance and the nominal temperature
 static const uint16_t beta          = 3950;                 // The beta coefficient of the thermistor (usually 3000-4000)
 static int32_t  average             = -1;                   // Previous value of ambient temperature (readings on aPIN)
-static int      cached_ambient      = -200;                 // Previous value of the temperature
+static int      cached_ambient      = ambient_tempC;        // Previous value of the temperature
 
-    if (disconnected) return ambient_tempC;                 // If IRON is not connected, return default ambient temperature
     uint16_t a_temp = amb_int.read();                       // Average value of ambient temperature
     if (abs(a_temp - average) < 20)
         return cached_ambient;
@@ -409,7 +403,6 @@ static int      cached_ambient      = -200;                 // Previous value of
         // convert the value to resistance
         float resistance = 1023.0 / (float)average - 1.0;
         resistance = (float)add_resistor / resistance;
-
         float steinhart = resistance / normal_temp[0];      // (R/Ro)
         steinhart = log(steinhart);                         // ln(R/Ro)
         steinhart /= beta;                                  // 1/B * ln(R/Ro)
@@ -421,15 +414,11 @@ static int      cached_ambient      = -200;                 // Previous value of
         cached_ambient  = ambient_tempC;
     }
     return cached_ambient;
-*/
-    return ambient_tempC;
 }
 
 void IRON::adjust(uint16_t t) {
-/*
     if (t > temp_max) t = temp_max;             // Do not allow over heating
     temp_set = t;
-*/
 }
 
 // If any switch is short, its status is 'true'
@@ -786,6 +775,7 @@ void workSCREEN::init(void) {
 void workSCREEN::rotaryValue(int16_t value) {   // Setup new preset temperature by rotating the encoder
     tempH = value;
 	ready = false;
+    lowpower_mode = false;
 	pD->msgOn();
     int16_t ambient = pIron->ambientTemp();
 	uint16_t temp = pCfg->humanToTemp(value, ambient); // Translate human readable temperature into internal value
@@ -811,18 +801,20 @@ SCREEN* workSCREEN::show(void) {
 	uint16_t td = pIron->tempDispersion();
 	uint16_t pd = pIron->powerDispersion();
 	int ap      = pIron->getAvgPower();
-   
+    uint16_t low_temp = pCfg->lowTemp();        // 'Standby temperature' setup in the main menu
+
 	if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 5) && (ap > 0))  {
 		if (!ready) {
 			pBz->shortBeep();
 			ready = true;
 			pD->msgReady();
+            if (low_temp)
+                lowpower_time = millis() + (uint32_t)pCfg->lowTimeout() * 1000;
 			update_screen = millis() + (period << 2);
 			return this;
 		}
 	}
 
-    uint16_t low_temp = pCfg->lowTemp();        // 'Standby temperature' setup in the main menu
     bool tilt_active = false;
     if (low_temp) {
         tilt_active = pIron->isIronTiltSwitch(pCfg->isReedType());
@@ -832,10 +824,10 @@ SCREEN* workSCREEN::show(void) {
     if (low_temp && ready && pCfg->getOffTimeout()) {       // The IRON has reaches the preset temperature                         
         hwTimeout(low_temp, tilt_active);       // Use hardware tilt switch to turn low power mode
     }
-/*
-    if (!lowpower_mode)
+    
+    if (!lowpower_mode && pCfg->isAmbientSensor())
         adjustPresetTemp();
-*/  
+
 	uint32_t to = (time_to_return - millis()) / 1000;
 	if (ready) {
 		if (scr_timeout > 0 && (to < 100)) {
@@ -1660,10 +1652,11 @@ SCREEN *pCurrentScreen = &offScr;
 /*
  * The timer1 overflow interrupt handler.
  * Activates the procedure for IRON current check or for IRON temperature check
- * Interrupt routine on Timer1 overflow, @31250 Hz
- * keepTemp() function takes about 160 mks, 5 ticks
+ * Interrupt routine on Timer1 overflow, @31250 Hz, 32 microseconds is a timer period
+ * keepTemp() function takes 353 mks, about 12 ticks of TIMER1; For sure, we use 15
+ * We should wait for 33 timer ticks before checking the temperature after iron was powered off
  */
-const uint32_t period_ticks = (31250 * temp_check_period)/1000-33-5;
+const uint32_t period_ticks = (31250 * temp_check_period)/1000-33-15;
 ISR(TIMER1_OVF_vect) {
 	if (iron_off) {									// The IRON is switched off, we need to check the temperature
 		if (++tmr1_count >= 33) {					// about 1 millisecond
@@ -1693,9 +1686,14 @@ void setup() {
 	// Load configuration parameters
 	ironCfg.init();
 	iron.init();
-    delay(1000);                                    // Wait for ambient temperature setup
 	uint16_t temp   = ironCfg.tempPresetHuman();
-    int16_t ambient = iron.ambientTemp();
+    int16_t ambient = 0;
+    for (uint8_t i = 0; i < 10; ++i) {
+        int16_t amb = iron.ambientTemp();
+        if (amb == ambient) break;
+        delay(500);
+        ambient = amb;
+    }
     temp = ironCfg.humanToTemp(temp, ambient);
 	iron.setTemp(temp);
     simpleBuzzer.activate(ironCfg.isBuzzer());

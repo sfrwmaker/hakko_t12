@@ -199,7 +199,7 @@ uint16_t IRON_CFG::tempToHuman(uint16_t temp, int16_t ambient) {
     int d = ambient - tip_ambient;
     uint16_t tempH = 0;
     if (temp < t_tip[0]) {
-        tempH = map(temp, 0, t_tip[0], ambient, temp_tip[0]);
+        tempH = map(temp, 0, t_tip[0], ambient, temp_tip[0]+d);
     } else if (temp >= t_tip[1]) {
         tempH = map(temp, t_tip[1], t_tip[2], temp_tip[1]+d, temp_tip[2]+d);
     } else {
