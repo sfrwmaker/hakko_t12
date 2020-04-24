@@ -140,6 +140,7 @@ void IRON_CFG::init(void) {
     }
     removeTipDuplication();
     tip_index = selectTip(Config.tip);
+    memcpy(&previous_cfg, &Config, sizeof(struct cfg));
 }
 
 void IRON_CFG::setLowPower(uint16_t low_temp, uint8_t low_to, bool reed) {
@@ -241,7 +242,7 @@ bool IRON_CFG::savePresetTempHuman(uint16_t temp) {
     Config.temp = temp;
     // When the tip changed, tip_index updated, but congiguration data remained the same
     Config.tip  = tip_index;
-    return CONFIG::save();
+    return save();
 }
 
 bool IRON_CFG::savePresetTemp(uint16_t temp) {
@@ -272,14 +273,14 @@ void IRON_CFG::saveConfig(uint8_t off, bool cels, bool buzzer, bool ambient) {
     if (cfg_celsius != cels) {                  // Need to translate preset temperature
         if (cels) {                             // Convert the preset temperature from Fahrenheit to Celsius
             Config.temp = map(Config.temp, temp_minF, temp_maxF, temp_minC, temp_maxC);
-            Config.bit_mask |= CFG_CELSIUS;
         } else {                                // Convert the preset temperature from Celsius to Fahrenheit
             Config.temp = map(Config.temp, temp_minC, temp_maxC, temp_minF, temp_maxF);
         }
     }
+    if (cels)    Config.bit_mask |= CFG_CELSIUS;
     if (buzzer)  Config.bit_mask |= CFG_BUZZER;
     if (ambient) Config.bit_mask |= CFG_THERM;
-    CONFIG::save();                             // Save new data into the EEPROM
+    save();                                     // Save new data into the EEPROM
 }
 
 void IRON_CFG::getCalibrationData(uint16_t tip[3]) {
@@ -378,6 +379,19 @@ bool IRON_CFG::toggleTipActivation(uint8_t global_index) {
     for (uint8_t i = 0; i < sizeof(TIP); ++i)   // Save TIP configuration data to EEPROM 
         EEPROM.write(addr+i, *p++);
     return tip_data.mask & TIP_ACTIVE;
+}
+
+bool IRON_CFG::save(void) {
+    if (memcmp(&Config, &previous_cfg, sizeof(struct cfg)) != 0) {
+Serial.print(F("update temp: ")); Serial.print(Config.temp);
+Serial.print(F(", tip: ")); Serial.print(Config.tip);
+Serial.print(F(", lo_temp: ")); Serial.print(Config.low_temp);
+Serial.print(F(", lo_to: ")); Serial.print(Config.low_to);
+Serial.print(F(", off: ")); Serial.print(Config.off_timeout);
+Serial.print(F(", mask: ")); Serial.println(Config.bit_mask, BIN);
+        CONFIG::save();
+        memcpy(&previous_cfg, &Config, sizeof(struct cfg));
+    }
 }
 
 bool IRON_CFG::checkTipCRC(TIP& tip_data, bool write) {

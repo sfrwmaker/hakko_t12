@@ -85,6 +85,7 @@ class IRON_CFG : public CONFIG, public TIPS {
         bool        isTipActive(uint8_t global_index);
         bool        toggleTipActivation(uint8_t global_index);
     private:
+        bool        save(void);                 // Save configuration data (if updated)
         bool        checkTipCRC(TIP& tip_data, bool write = false);
         bool        loadTipData(TIP* tip_data, uint8_t index);
         bool        validateTip(TIP& tip_data); // Validate the IRON tip calibration
@@ -94,6 +95,7 @@ class IRON_CFG : public CONFIG, public TIPS {
         int8_t      emptyTipSlot(void);         // Unused Tip slot idex in EEPROM area or -1 if not found
         void        removeTipDuplication(void);
         char        tip_name[tip_name_sz+1];
+        struct cfg  previous_cfg;               // The loaded config
         uint16_t    t_tip[3]    = {0};          // The current tip calibration
         uint8_t     tip_index   = 0;            // The current tip index (EEPROM customized  array)
         uint8_t     tip_mask    = 0;            // The current tip status (see TIP_STATUS in iron_tips.h)

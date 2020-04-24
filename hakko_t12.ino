@@ -321,7 +321,7 @@ bool IRON::checkIron(void) {
 void IRON::keepTemp(void) {
     uint16_t  ambient = analogRead(aPIN);       // Update ambient temperature
     amb_int.update(ambient);
-    uint16_t t = analogRead(sPIN);              // Reat the IRON temperature
+    uint16_t t = analogRead(sPIN);              // Read the IRON temperature
     volatile uint16_t t_set = temp_set;         // The preset temperature depends on usual/low power mode
     if (temp_low) t_set = temp_low;
     
@@ -354,7 +354,6 @@ void IRON::keepTemp(void) {
             }
             p = PID::reqPower(t_set, t);
             p = constrain(p, 0, max_power);
-            if (disconnected) p = 0;            // Do not supply power if iron disconnected
             break;
         case POWER_FIXED:
             p = fix_power;
@@ -803,7 +802,7 @@ SCREEN* workSCREEN::show(void) {
 	int ap      = pIron->getAvgPower();
     uint16_t low_temp = pCfg->lowTemp();        // 'Standby temperature' setup in the main menu
 
-	if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 5) && (ap > 0))  {
+	if ((abs(temp_set - temp) < 3) && (pIron->tempDispersion() <= 10) && (ap > 0))  {
 		if (!ready) {
 			pBz->shortBeep();
 			ready = true;
@@ -824,10 +823,10 @@ SCREEN* workSCREEN::show(void) {
     if (low_temp && ready && pCfg->getOffTimeout()) {       // The IRON has reaches the preset temperature                         
         hwTimeout(low_temp, tilt_active);       // Use hardware tilt switch to turn low power mode
     }
-    
+
     if (!lowpower_mode && pCfg->isAmbientSensor())
         adjustPresetTemp();
-
+        
 	uint32_t to = (time_to_return - millis()) / 1000;
 	if (ready) {
 		if (scr_timeout > 0 && (to < 100)) {
@@ -1653,10 +1652,10 @@ SCREEN *pCurrentScreen = &offScr;
  * The timer1 overflow interrupt handler.
  * Activates the procedure for IRON current check or for IRON temperature check
  * Interrupt routine on Timer1 overflow, @31250 Hz, 32 microseconds is a timer period
- * keepTemp() function takes 353 mks, about 12 ticks of TIMER1; For sure, we use 15
+ * keepTemp() function takes 353 mks, about 12 ticks of TIMER1;
  * We should wait for 33 timer ticks before checking the temperature after iron was powered off
  */
-const uint32_t period_ticks = (31250 * temp_check_period)/1000-33-15;
+const uint32_t period_ticks = (31250 * temp_check_period)/1000-33-12;
 ISR(TIMER1_OVF_vect) {
 	if (iron_off) {									// The IRON is switched off, we need to check the temperature
 		if (++tmr1_count >= 33) {					// about 1 millisecond
