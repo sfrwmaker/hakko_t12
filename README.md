@@ -1,5 +1,9 @@
 Soldering IRON controller fot hakko t12 tips based on atmega328p-pu muicrocontroller (Arduino UNO/NANO)
 
+Updated 04/24/2020.
+ - Fixed issue of accidentally switching from Celsius to Fahrenheit
+ - No more checking for iron connectivity while it is active
+ 
 Updated 04/18/2020. The ambient temperature support restored.
  - Fixed wrong temperature readings issue in keepTemp() procedure.
  - Fixed standby mode actiovation issue.
