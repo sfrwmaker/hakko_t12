@@ -11,10 +11,10 @@ void DSPL::init(void) {
 
 void DSPL::tip(const char *tip_name, bool top) {
     uint8_t  y = 1; if (top) y = 0;
-    LiquidCrystal::setCursor(0, y);
-    LiquidCrystal::print(tip_name);
+    LiquidCrystal_I2C::setCursor(0, y);
+    LiquidCrystal_I2C::print(tip_name);
         for (uint8_t i = strlen(tip_name); i < 16; ++i)
-        LiquidCrystal::print(' ');
+        LiquidCrystal_I2C::print(' ');
 }
 
 void DSPL::msgSelectTip(void) {
