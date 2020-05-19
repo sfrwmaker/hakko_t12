@@ -1,5 +1,9 @@
 Soldering IRON controller fot hakko t12 tips based on atmega328p-pu muicrocontroller (Arduino UNO/NANO)
 
+Updated 05/19/2020.
+ - Fixed wrong placement of R13 resistor in the complete schematics
+ - Fixed LiquiqCrystal error in 1206 display file.
+
 Updated 04/24/2020.
  - Fixed issue of accidentally switching from Celsius to Fahrenheit
  - No more checking for iron connectivity while it is active
