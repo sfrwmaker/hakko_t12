@@ -2,7 +2,7 @@ Soldering IRON controller fot hakko t12 tips based on atmega328p-pu muicrocontro
 
 Updated 05/19/2020.
  - Fixed wrong placement of R13 resistor in the complete schematics
- - Fixed LiquiqCrystal error in 1206 display file.
+ - Fixed LiquiqCrystal error in 1602_I2C display file.
 
 Updated 04/24/2020.
  - Fixed issue of accidentally switching from Celsius to Fahrenheit
