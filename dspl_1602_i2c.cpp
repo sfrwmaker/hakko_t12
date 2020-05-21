@@ -22,7 +22,7 @@ void DSPL::msgSelectTip(void) {
     LiquidCrystal_I2C::print(F("iron tip        "));
 }
 
-void DSPL::msgSelectTip(void) {
+void DSPL::msgActivateTip(void) {
     LiquidCrystal_I2C::setCursor(0, 0);
     LiquidCrystal_I2C::print(F("activate tip    "));
 }
@@ -61,9 +61,9 @@ void DSPL::pSet(uint8_t  p) {
 
 void DSPL::tRef(uint8_t ref) {
     char buff[9];
-    LiquidCrystal::setCursor(0, 0);
+    LiquidCrystal_I2C::setCursor(0, 0);
     sprintf(buff, "Ref. #%1d", ref+1);
-    LiquidCrystal::print(buff);
+    LiquidCrystal_I2C::print(buff);
 }
 
 void DSPL::timeToOff(uint8_t  sec) {
@@ -132,96 +132,96 @@ void DSPL::msgDefault() {
 
 void DSPL::setupMode(uint8_t mode, bool tune, uint16_t p) {
     char buff[5];
-    LiquidCrystal::clear();
+    LiquidCrystal_I2C::clear();
     if (!tune) {
-        LiquidCrystal::print(F("setup"));
-        LiquidCrystal::setCursor(1,1);
+        LiquidCrystal_I2C::print(F("setup"));
+        LiquidCrystal_I2C::setCursor(1,1);
     }
     switch (mode) {
         case 0:                                 // C/F. In-line editing
-            LiquidCrystal::print(F("units"));
-            LiquidCrystal::setCursor(7, 1);
+            LiquidCrystal_I2C::print(F("units"));
+            LiquidCrystal_I2C::setCursor(7, 1);
             if (p)
-                LiquidCrystal::print("C");
+                LiquidCrystal_I2C::print("C");
             else
-                LiquidCrystal::print("F");
+                LiquidCrystal_I2C::print("F");
             break;
         case 1:                                 // Buzzer
-            LiquidCrystal::print(F("buzzer"));
+            LiquidCrystal_I2C::print(F("buzzer"));
             if (tune) {
-                LiquidCrystal::setCursor(1,1);
+                LiquidCrystal_I2C::setCursor(1,1);
                 if (p)
-                    LiquidCrystal::print(F("ON"));
+                    LiquidCrystal_I2C::print(F("ON"));
                 else
-                    LiquidCrystal::print(F("OFF"));
+                    LiquidCrystal_I2C::print(F("OFF"));
             }
             break;
         case 2:                                 // Switch type
-            LiquidCrystal::print(F("switch"));
+            LiquidCrystal_I2C::print(F("switch"));
             if (tune) {
-                LiquidCrystal::setCursor(1,1);
+                LiquidCrystal_I2C::setCursor(1,1);
                 if (p)
-                    LiquidCrystal::print(F("REED"));
+                    LiquidCrystal_I2C::print(F("REED"));
                 else
-                    LiquidCrystal::print(F("TILT"));
+                    LiquidCrystal_I2C::print(F("TILT"));
             }
             break;
         case 3:                                 // ambient temperatyre sensor
-            LiquidCrystal::print(F("ambient"));
+            LiquidCrystal_I2C::print(F("ambient"));
             if (tune) {
-                LiquidCrystal::setCursor(1,1);
+                LiquidCrystal_I2C::setCursor(1,1);
                 if (p)
-                    LiquidCrystal::print(F("ON"));
+                    LiquidCrystal_I2C::print(F("ON"));
                 else
-                    LiquidCrystal::print(F("OFF"));
+                    LiquidCrystal_I2C::print(F("OFF"));
             }
             break;
         case 4:                                 // standby temperature
-            LiquidCrystal::print(F("stby Temp"));
+            LiquidCrystal_I2C::print(F("stby Temp"));
             if (tune) {
-                LiquidCrystal::setCursor(1,1);
+                LiquidCrystal_I2C::setCursor(1,1);
                 if (p > 0) {
                     sprintf(buff, "%3d", p);
-                    LiquidCrystal::print(buff);
+                    LiquidCrystal_I2C::print(buff);
                 } else {
-                    LiquidCrystal::print(" NO");
+                    LiquidCrystal_I2C::print(" NO");
                 }   
             }
             break;
         case 5:                                 // Standby Time
-            LiquidCrystal::print(F("stby time"));
+            LiquidCrystal_I2C::print(F("stby time"));
             if (tune) {
-                LiquidCrystal::setCursor(1,1);
+                LiquidCrystal_I2C::setCursor(1,1);
                 sprintf(buff, "%3ds", p);
-                LiquidCrystal::print(buff);
+                LiquidCrystal_I2C::print(buff);
             }
             break;
         case 6:                                 // off-timeout
-            LiquidCrystal::print(F("off"));
+            LiquidCrystal_I2C::print(F("off"));
             if (tune) {
-                LiquidCrystal::setCursor(1,1);
+                LiquidCrystal_I2C::setCursor(1,1);
                 if (p > 0) {
                     sprintf(buff, "%2dm", p);
-                    LiquidCrystal::print(buff);
+                    LiquidCrystal_I2C::print(buff);
                 } else {
-                    LiquidCrystal::print(" NO");
+                    LiquidCrystal_I2C::print(" NO");
                 }   
             }
             break;
         case 7:                                 // Tip calibrage
-            LiquidCrystal::print(F("tip config."));
+            LiquidCrystal_I2C::print(F("tip config."));
             break;
         case 8:                                 // Activate tip
-            LiquidCrystal::print(F("activate tip"));
+            LiquidCrystal_I2C::print(F("activate tip"));
             break;
         case 9:                                 // Tune controller
-            LiquidCrystal::print(F("tune"));
+            LiquidCrystal_I2C::print(F("tune"));
             break;
         case 10:                                // save
-            LiquidCrystal::print(F("apply"));
+            LiquidCrystal_I2C::print(F("apply"));
             break;
         case 11:                                // cancel
-            LiquidCrystal::print(F("cancel"));
+            LiquidCrystal_I2C::print(F("cancel"));
         default:
             break;
     }
@@ -243,4 +243,12 @@ void DSPL::calibrated(bool calibrated) {
     LiquidCrystal_I2C::print(buff);
 }
 
+void DSPL::mark(char sym, bool on) {
+    char buff[5];
+    for (uint8_t  i = 0; i < 4; ++i) buff[i] = ' ';
+    if (on) buff[3] = sym;
+    buff[4] = '\0';
+    LiquidCrystal_I2C::setCursor(4, 1);
+    LiquidCrystal_I2C::print(buff);
+}
 #endif

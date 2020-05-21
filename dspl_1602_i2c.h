@@ -34,10 +34,11 @@ class DSPL : protected LiquidCrystal_I2C {
         void    msgCancel(void);                    // Show 'cancel' message
         void    msgApply(void);                     // Show 'save' message
         void    msgSelectTip(void);                 // Show 'tip:' message
-        void DSPL::msgActivateTip(void);            // Show 'activate tip' message
-        void    setupMode(uint8_t  mode, uint16_t  p = 0); // Show the configuration mode [0 - 11]
+        void    msgActivateTip(void);               // Show 'activate tip' message
+        void    setupMode(uint8_t  mode, bool tune, uint16_t  p = 0); // Show the configuration mode [0 - 11]
         void    percent(uint8_t  Power);            // Show the percentage
         void    calibrated(bool calibrated);        // Show '*' if the tip was not calibrated
+        void    mark(char sym, bool on);
     private:
         bool full_second_line;                      // Whether the second line is full with the message
 };
